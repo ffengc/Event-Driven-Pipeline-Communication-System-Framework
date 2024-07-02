@@ -1,7 +1,12 @@
 
+//============================================================================
+// Name        : poll.hpp
+// Author      : Fengcheng Yu
+// Description : 多路转接的封装
+//============================================================================
 
-#ifndef __YUFC_EPOLL__
-#define __YUFC_EPOLL__
+#ifndef __YUFC_POLL__
+#define __YUFC_POLL__
 
 #include <iostream>
 #include <sys/epoll.h>

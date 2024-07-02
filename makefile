@@ -11,4 +11,4 @@ server:./Server/server.cc
 .PHONY:clean
 clean:
 	rm -f ./Server/server ./Client/client
-	rm -f ./Utils/*.ipc
+	rm -f ./temp/*.ipc
