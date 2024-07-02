@@ -1,4 +1,8 @@
-
+//============================================================================
+// Name        : epoll_control.hpp
+// Author      : Fengcheng Yu
+// Date        : 2024.7.1
+//============================================================================
 
 #ifndef __YUFC_POLL_CONTROL__
 #define __YUFC_POLL_CONTROL__
@@ -11,9 +15,9 @@
 #include <cerrno>
 #include <functional>
 #include <iostream>
+#include <queue>
 #include <string>
 #include <unordered_map>
-#include <queue>
 
 namespace yufc {
 /**
@@ -27,7 +31,7 @@ using callback_t = std::function<void(connection*)>; // 业务逻辑
 /**
  * 对于client来说callback负责把cache的东西，放到发送的文件描述符中的out_buffer里去
  * 对于server来说callback就是把cache的东西，平均分配到3个worker线程对应的pipe_fd的out_buffer里去
-*/
+ */
 class connection {
 public:
     connection(int fd = -1)
@@ -53,6 +57,8 @@ public:
 class poll_control {
 public:
     const static int gnum = 128; // 获取epoll继续事件的数量
+    bool __quit_signal = false;
+
 public:
     // conn的多路转接配置
     __epoll __poll; // 这里直接维护一个epoll
@@ -72,14 +78,11 @@ public:
     int __connector_to_connector_fd;
     std::queue<std::string> __local_cache; // 本地缓冲区
     callback_t __callback;
-private:
-    // 当前是client端还是server端?
-    PC_MODE __mode;
+    PC_MODE __mode; // 当前是client端还是server端?
+    size_t __worker_finish_count;
 
 public:
     poll_control(void* (*worker)(void*) = nullptr, // worker 线程要做的事
-        void (*connector_to_worker)(connection*) = nullptr, // conn 线程要做的事
-        void (*connector_to_connector)(connection*) = nullptr, // conn 线程要做的事
         callback_t callback = nullptr, // 当前pc对象要做的事情
         int worker_number = THREAD_NUM_DEFAULT, // worker 线程个数
         std::vector<int> worker_fds = {}, // worker线程对应的通信管道的文件描述符
@@ -95,9 +98,10 @@ public:
         , __worker_thread_num(worker_number)
         , __lambda(lambda)
         , __mode(mode)
-        , __callback(callback) {
+        , __callback(callback)
+        , __worker_finish_count(0) {
         // 0. 检查合法输入参数合法性
-        assert(worker != nullptr && connector_to_worker != nullptr && connector_to_connector != nullptr); // 检查回调非空
+        assert(worker != nullptr && callback != nullptr); // 检查回调非空
         assert(worker_number == worker_fds.size()); // 检查worker数量和管道fd数量是否相同
         assert(worker_number == connector_to_worker_fds.size() && worker_number == worker_fds.size());
         // 1. 创建worker线程
@@ -118,19 +122,17 @@ public:
         // 3. 添加conn_to_conn到epoll中，只需要处理发的逻辑(client)
         // 注意区分，如果是client端__connector_to_connector是写回调，否则是读
         if (__mode == CLIENT)
-            __add_connection(connector_to_connector_fd, nullptr, connector_to_connector, std::bind(&poll_control::__excepter, this, std::placeholders::_1));
+            __add_connection(connector_to_connector_fd, nullptr, std::bind(&poll_control::__sender, this, std::placeholders::_1), std::bind(&poll_control::__excepter, this, std::placeholders::_1));
         else if (__mode == SERVER) {
-            __add_connection(connector_to_connector_fd, connector_to_connector, nullptr, std::bind(&poll_control::__excepter, this, std::placeholders::_1));
-            // std::cout << connector_to_connector_fd << " should be 3" << std::endl;
-        }
-        else
+            __add_connection(connector_to_connector_fd, std::bind(&poll_control::__recver, this, std::placeholders::_1), nullptr, std::bind(&poll_control::__excepter, this, std::placeholders::_1));
+        } else
             assert(false);
         // 4. 添加conn_to_worker到epoll中，只需要处理从3个管道拿数据的逻辑(client)
         for (size_t i = 0; i < __worker_thread_num; ++i) {
             if (__mode == CLIENT)
-                __add_connection(connector_to_worker_fds[i], connector_to_worker, nullptr, std::bind(&poll_control::__excepter, this, std::placeholders::_1));
+                __add_connection(connector_to_worker_fds[i], std::bind(&poll_control::__recver, this, std::placeholders::_1), nullptr, std::bind(&poll_control::__excepter, this, std::placeholders::_1));
             else if (__mode == SERVER)
-                __add_connection(connector_to_worker_fds[i], nullptr, connector_to_worker, std::bind(&poll_control::__excepter, this, std::placeholders::_1));
+                __add_connection(connector_to_worker_fds[i], nullptr, std::bind(&poll_control::__sender, this, std::placeholders::_1), std::bind(&poll_control::__excepter, this, std::placeholders::_1));
             else
                 assert(false);
         }
@@ -143,6 +145,8 @@ public:
             iter->join(); // 这个线程把自已join()一下
             delete iter;
         }
+        for (auto& iter : __connection_map)
+            delete iter.second;
         // close 所有的文件描述符，一共有7个
         for (auto& iter : __worker_fds)
             close(iter);
@@ -156,20 +160,14 @@ public:
 public:
     void dispather() {
         // 输入参数是上层的业务逻辑
-        for (auto& iter : __worker_threads) {
+        for (auto& iter : __worker_threads)
             iter->start();
-            // logMessage(NORMAL, "%s %s", iter->name().c_str(), "start\n");
-        }
-        while (true) {
+        while (true && !__quit_signal && __worker_finish_count < __worker_thread_num)
             loop_once();
-        }
     }
     void loop_once() {
         // 捞取所有就绪事件到revs数组中
         int n = __poll.wait_poll(__revs, __revs_num);
-        if(__mode == SERVER)
-            if(n)
-                std::cout << n << std::endl;
         for (int i = 0; i < n; i++) {
             // 此时就可以去处理已经就绪事件了！
             int cur_fd = __revs[i].data.fd;
@@ -186,14 +184,11 @@ public:
                 // 1. 先判断这个套接字是否在这个map中存在
                 if (is_fd_in_map(cur_fd) && __connection_map[cur_fd]->__recv_callback != nullptr)
                     __connection_map[cur_fd]->__recv_callback(__connection_map[cur_fd]);
-                std::cout << "EPOLLIN" << std::endl;
             }
             // 如果out就绪了 说明这个cur_fd是connector->connector的fd
             if (revents & EPOLLOUT) {
                 if (is_fd_in_map(cur_fd) && __connection_map[cur_fd]->__send_callback != nullptr)
                     __connection_map[cur_fd]->__send_callback(__connection_map[cur_fd]);
-                std::cout << "EPOLLOUT" << std::endl;
-                std::cout << cur_fd << std::endl;
             }
         }
     }
@@ -213,15 +208,14 @@ private:
         __connection_map.insert({ cur_fd, conn });
     }
 
-#if fasle
+private:
     void __recver(connection* conn) {
         // 非阻塞读取，所以要循环读取
-        // v1. 先面向字节流
-        const int num = 1024;
+        const int num = 102400;
         bool is_read_err = false;
         while (true) {
             char buffer[num];
-            ssize_t n = recv(conn->__sock, buffer, sizeof(buffer) - 1, 0);
+            ssize_t n = read(conn->__fd, buffer, sizeof(buffer) - 1); // bug?
             if (n < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) // 读取完毕了(正常的break)
                     break;
@@ -234,8 +228,9 @@ private:
                     break;
                 }
             } else if (n == 0) {
-                logMessage(DEBUG, "client %d quit, server close %d", conn->__sock, conn->__sock);
+                // logMessage(DEBUG, "client %d quit, server close %d", conn->__fd, conn->__fd);
                 conn->__except_callback(conn);
+                __quit_signal = true;
                 is_read_err = true;
                 break;
             }
@@ -243,20 +238,24 @@ private:
             buffer[n] = 0;
             conn->__in_buffer += buffer; // 放到缓冲区里面就行了
         } // end while
-        logMessage(DEBUG, "recv done, the inbuffer: %s", conn->__in_buffer.c_str());
+        // logMessage(DEBUG, "recv done, the inbuffer: %s", conn->__in_buffer.c_str());
         if (is_read_err == true)
             return;
         // 前面的读取没有出错
         // 这里就是上层的业务逻辑，如果对收到的报文做处理
         // 1. 切割报文，把单独的报文切出来
         // 2. 调用回调
-
-        // 还没有想到怎么切割报文，这里假设读到的就是完整的报文
-        __callback_func(conn, conn->__in_buffer);
+        // __callback_func(conn, conn->__in_buffer);
+        std::vector<std::string> outs = extract_messages(conn->__in_buffer);
+        // outs是切割出来的报文，丢到缓冲区里去
+        for (auto e : outs)
+            conn->__tsvr->__local_cache.push(e);
+        // 丢到缓冲区之后，还需要一个很重要的逻辑，就是要把东西放到输出out_fd(out_fd和conn->__fd不是同一个)
+        conn->__tsvr->__callback(conn);
     }
     void __sender(connection* conn) {
         while (true) {
-            ssize_t n = send(conn->__sock, conn->__out_buffer.c_str(), conn->__out_buffer.size(), 0);
+            ssize_t n = write(conn->__fd, conn->__out_buffer.c_str(), conn->__out_buffer.size());
             if (n > 0) {
                 conn->__out_buffer.erase(0, n);
                 if (conn->__out_buffer.empty())
@@ -275,14 +274,12 @@ private:
         }
         // 走到这里，要么就是发完，要么就是发送条件不满足，下次发送
         if (conn->__out_buffer.empty())
-            enable_read_write(conn, true, false);
+            conn->__tsvr->enable_read_write(conn, true, false);
         else
-            enable_read_write(conn, true, true);
+            conn->__tsvr->enable_read_write(conn, true, true);
     }
-#endif 
-    // 异常统一处理
     void __excepter(connection* conn) {
-        assert(false); // 不应该有这个问题，先assert一下做测试
+        // assert(false); // 不应该有这个问题，先assert一下做测试
         if (!is_fd_in_map(conn->__fd))
             return;
         // 1. 从epoll中移除
@@ -294,24 +291,21 @@ private:
         close(conn->__fd);
         // 4. delete conn
         delete conn;
-        logMessage(DEBUG, "__excepter called");
+        logMessage(DEBUG, "__excepter called\n");
     }
+
 public:
     void enable_read_write(connection* conn, bool readable, bool writable) {
         uint32_t events = (readable ? EPOLLIN : 0) | (writable ? EPOLLOUT : 0);
         if (!__poll.control_poll(conn->__fd, events))
             logMessage(ERROR, "trigger write event fail");
     }
-
-public:
     bool is_fd_in_map(int sock) {
         auto iter = __connection_map.find(sock);
         if (iter == __connection_map.end())
             return false;
         return true;
     }
-
-public:
     static bool set_non_block_fd(int fd) { // 文件描述符设置为非阻塞的文件描述符
         int fl = fcntl(fd, F_GETFL);
         if (fl < 0)
