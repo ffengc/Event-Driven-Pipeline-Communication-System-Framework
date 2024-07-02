@@ -10,11 +10,15 @@
 
 #include "./log.hpp"
 #include <assert.h>
+#include <cctype>
 #include <chrono>
 #include <fcntl.h>
+#include <iomanip>
 #include <iostream>
 #include <random>
 #include <signal.h>
+#include <sstream>
+#include <stdexcept> // for runtime_error
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,11 +26,10 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <random>
 
 // ---------------------------------------- 核心管道文件相关配置 ----------------------------------------
 #define MODE 0666 // 定义管道文件的权限
-#define SIZE 128 // 管道设计的大小要足够大，避免在测试打满server缓冲区时崩溃
+#define SIZE 102400 // 管道设计的大小要足够大，避免在测试打满server缓冲区时崩溃
 std::string ipcPath = "../Utils/fifo.ipc";
 
 // ---------------------------------------- 3个通信管道文件相关配置 ----------------------------------------
@@ -48,6 +51,7 @@ std::pair<std::vector<int>, std::vector<int>> get_client_worker_fifo(int worker_
         int fd1 = open(real_path.c_str(), O_WRONLY | O_NONBLOCK);
         in_fd.push_back(fd1); // 按照写的方式打开
         out_fd.push_back(fd2); // 按照读的方式打开
+        // std::cout << fd1 << ":" << fd2 << std::endl; // write:read
     }
     return { in_fd, out_fd };
 }
@@ -60,15 +64,12 @@ void delete_fifo(int worker_number, std::string root_path) {
     }
 }
 
-
 // --------------------------------- Client或者Server里通信管道相关配置 ---------------------------------
 std::string serverIpcRootPath = "../Utils/server_fifo"; // server_fifo1.ipc, server_fifo2.ipc, server_fifo3.ipc ... 归worker管
 std::string clientIpcRootPath = "../Utils/client_fifo"; // client_fifo1.ipc, client_fifo2.ipc, client_fifo3.ipc ... 归worker管
 
-
 // ----------------------------------- pc对象相关配置 -----------------------------------
 #define THREAD_NUM_DEFAULT 3 // 默认三个线程
-// #define CACHE_MAX_SIZE_DEFAULT 20 // 默认缓冲区最大为20
 enum {
     CLIENT,
     SERVER
@@ -76,36 +77,124 @@ enum {
 using PC_MODE = int;
 
 // ----------------------------------- 通信相关配置 -----------------------------------
-#define MESG_NUMBER 50 // 定义发n条消息之后，Client自动退出
+#define MESG_NUMBER 10 // 定义发n条消息之后，Client自动退出
 #define WAIT_IO_DONE 2 // 最后client和server会打印程序运行时间，避免前面有io没有结束，导致打印时间的语句不实在最后一行，所以在打印最后的时间语句前统一睡眠，等待io结束
-
 
 // 消息结构
 // 按照要求设置消息
 struct message {
-    uint64_t src_tid;  // 8个字节
-    char data[4096];   // 4096个字节
+    size_t mesg_number;
+    uint64_t src_tid; // 8个字节
+    char data[4096]; // 4096个字节
 };
+#if false
 // 序列化
 std::string encode(const message& msg) {
     std::string result;
-    result.resize(sizeof(msg.src_tid) + sizeof(msg.data)); // 确保有足够的空间来存储整个结构体
-    // 复制src_tid到result
+    result.resize(sizeof(msg.src_tid) + sizeof(msg.data));
     memcpy(&result[0], &msg.src_tid, sizeof(msg.src_tid));
-    // 复制data到result，紧接着src_tid后面
     memcpy(&result[sizeof(msg.src_tid)], msg.data, sizeof(msg.data));
-    return result;
+    return base64_encode(reinterpret_cast<const unsigned char*>(result.data()), result.size());
 }
 // 反序列化
 bool decode(const std::string& encoded, message& msg) {
-    if (encoded.size() != sizeof(msg.src_tid) + sizeof(msg.data))
-        return false; // 如果encoded字符串大小不符合预期，则解码失败
-    // 从字符串中复制src_tid到结构体
-    memcpy(&msg.src_tid, &encoded[0], sizeof(msg.src_tid));
-    // 从字符串中复制data到结构体，紧接着src_tid后面
-    memcpy(msg.data, &encoded[sizeof(msg.src_tid)], sizeof(msg.data));
+    std::string decoded = base64_decode(encoded);
+    if (decoded.size() != sizeof(msg.src_tid) + sizeof(msg.data))
+        return false;
+    memcpy(&msg.src_tid, &decoded[0], sizeof(msg.src_tid));
+    memcpy(msg.data, &decoded[sizeof(msg.src_tid)], sizeof(msg.data));
     return true;
 }
+std::string encode(const message& msg) {
+    std::ostringstream out;
+    // 编码 src_tid 为十六进制字符串
+    out << std::hex << msg.src_tid << '|';
+    // 编码 data，处理特殊字符
+    for (int i = 0; i < 4096; i++) {
+        if (std::isprint(msg.data[i]) && msg.data[i] != '%') {
+            out << msg.data[i];
+        } else {
+            out << '%' << std::setw(2) << std::setfill('0') << std::hex << (unsigned int)(unsigned char)msg.data[i];
+        }
+    }
+    return out.str();
+}
+bool decode(const std::string& serialized, message& msg) {
+    std::istringstream in(serialized);
+    std::string tid_hex;
+    if (!std::getline(in, tid_hex, '|'))
+        return false;
+    // 解析 src_tid
+    std::istringstream hexstream(tid_hex);
+    hexstream >> std::hex >> msg.src_tid;
+    // 解析 data
+    std::string data;
+    if (!std::getline(in, data))
+        return false; 
+    size_t i = 0, j = 0;
+    while (i < data.size() && j < 4096) {
+        if (data[i] == '%' && i + 2 < data.size()) {
+            std::istringstream hex_char(data.substr(i + 1, 2));
+            int value;
+            hex_char >> std::hex >> value;
+            msg.data[j++] = static_cast<char>(value);
+            i += 3;  // 跳过 "%XX"
+        } else {
+            msg.data[j++] = data[i++];
+        }
+    }
+    return true;
+}
+#endif
+std::string encode(const message& msg) {
+    std::ostringstream out;
+    // 编码 mesg_number 和 src_tid 为十六进制字符串
+    out << std::hex << msg.mesg_number << '|' << msg.src_tid << '|';
+    // 编码 data，处理特殊字符
+    for (int i = 0; i < 4096; i++) {
+        if (std::isprint(msg.data[i]) && msg.data[i] != '%') {
+            out << msg.data[i];
+        } else {
+            out << '%' << std::setw(2) << std::setfill('0') << std::hex << (unsigned int)(unsigned char)msg.data[i];
+        }
+    }
+    return out.str();
+}
+bool decode(const std::string& serialized, message& msg) {
+    std::istringstream in(serialized);
+    std::string mesg_number_hex, tid_hex;
+
+    if (!std::getline(in, mesg_number_hex, '|') || !std::getline(in, tid_hex, '|'))
+        return false;
+
+    // 解析 mesg_number
+    std::istringstream mesg_number_stream(mesg_number_hex);
+    mesg_number_stream >> std::hex >> msg.mesg_number;
+
+    // 解析 src_tid
+    std::istringstream tid_stream(tid_hex);
+    tid_stream >> std::hex >> msg.src_tid;
+
+    // 解析 data
+    std::string data;
+    std::getline(in, data); // 读取剩余部分作为 data
+
+    size_t i = 0, j = 0;
+    while (i < data.size() && j < 4096) {
+        if (data[i] == '%' && i + 2 < data.size()) {
+            std::istringstream hex_char(data.substr(i + 1, 2));
+            int value;
+            hex_char >> std::hex >> value;
+            msg.data[j++] = static_cast<char>(value);
+            i += 3; // 跳过 "%XX"
+        } else {
+            msg.data[j++] = data[i++];
+        }
+    }
+
+    return true;
+}
+
 // 切割报文
 std::vector<std::string> extract_messages(std::string& buffer) {
     std::vector<std::string> messages;
@@ -119,6 +208,5 @@ std::vector<std::string> extract_messages(std::string& buffer) {
     }
     return messages;
 }
-
 
 #endif

@@ -19,7 +19,9 @@ void* worker(void* args) {
     std::random_device rd;
     std::mt19937 gen(rd());
     std::exponential_distribution<> dist(pc->__lambda); // 这里用命令行传递过来的参数
+    size_t mesg_number = 0;
     while (true) {
+        mesg_number++;
         double interval = dist(gen); // 生成符合负指数分布的随机数
         unsigned int sleepTime = static_cast<unsigned int>(std::floor(interval)); // 负指数
         sleep(sleepTime);
@@ -27,22 +29,29 @@ void* worker(void* args) {
         // std::cout << "client generate a mesg: " << msg << std::endl;
         // 这里要生成一条数据
         struct message msg;
+        msg.mesg_number = mesg_number;
         msg.src_tid = pthread_self();
-        memset(msg.data, 0, sizeof(msg.data));
+        memset(msg.data, '0', sizeof(msg.data));
         // 现在数据已经生成好了，现在需要发给conn，通过管道的方式，那么这个管道的fd在哪？
+        std::cout << "generate a mesg[" << mesg_number << "], src_tid: " << msg.src_tid << std::endl;
         int cur_fd = pc->__worker_thread_name_fd_map[td->__name]; // 所以只需要把信息放到cur_fd的管道里面就可以了
         // 在把消息放进去之前，先encode一下，协议定制！
         std::string encoded = encode(msg) + "\n\r\n"; // "\n\r\n" 就是防止粘包的标识
-        std::cout << "worker: " << encoded << std::endl;
+        // std::cout << "worker: " << encoded << std::endl;
         // 写到管道中去
         write(cur_fd, encoded.c_str(), encoded.size());
+        if (mesg_number >= MESG_NUMBER) {
+            // 最多发MESG_NUMBER条消息
+            pc->__worker_finish_count++; // 设置退出信号
+            break;
+        }
     }
     return nullptr;
 }
 
 void connector_to_worker(connection* conn) {
     // 非阻塞读取，所以要循环读取
-    const int num = 1024;
+    const int num = 102400;
     bool is_read_err = false;
     while (true) {
         char buffer[num];
@@ -86,8 +95,8 @@ void connector_to_worker(connection* conn) {
 
 void connector_to_connector(connection* conn) {
     while (true) {
-        std::cout << "conn->__fd: " << conn->__fd << std::endl;
-        std::cout << conn->__out_buffer << std::endl;
+        // std::cout << "conn->__fd: " << conn->__fd << std::endl;
+        // std::cout << conn->__out_buffer << std::endl;
         ssize_t n = write(conn->__fd, conn->__out_buffer.c_str(), conn->__out_buffer.size());
         if (n > 0) {
             conn->__out_buffer.erase(0, n);
@@ -113,7 +122,7 @@ void connector_to_connector(connection* conn) {
 }
 
 void callback(connection* conn) {
-    auto q = conn->__tsvr->__local_cache;
+    auto& q = conn->__tsvr->__local_cache;
     std::string buffer;
     while (!q.empty()) {
         // 访问队列前端的元素
@@ -127,7 +136,6 @@ void callback(connection* conn) {
     send_conn->__out_buffer += buffer;
     conn->__tsvr->enable_read_write(send_conn, true, true); // 允许写!
 }
-
 
 void Usage() {
     std::cerr << "Usage: " << std::endl

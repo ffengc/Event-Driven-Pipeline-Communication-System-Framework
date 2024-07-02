@@ -46,11 +46,12 @@ void* worker(void* args) {
         // 去哪个fd里面找数据？
         std::string buffer_msg = ReadFromIpc(my_fd); // 这里有问题，不能直接打印，要解包
         std::vector<std::string> final_msg = extract_messages(buffer_msg); // 解包
+        // std::cout << "worker: " << td->__name << " " << final_msg.size() << std::endl;
         for (auto e : final_msg) {
             struct message msg;
             decode(e, msg);
             // 此时我们就获取到数据了，打印一下
-            std::cout << "client# " << "I am " << msg.src_tid << "from client" << std::endl; // 打印这个消息
+            std::cout << td->__name << " client# " << "I am " << "[" << msg.mesg_number << "]" << msg.src_tid << " from client" << std::endl; // 打印这个消息
         }
     }
     return nullptr;
@@ -84,9 +85,8 @@ void connector_to_worker(connection* conn) {
 }
 
 void connector_to_connector(connection* conn) {
-    std::cout << "server recving" << std::endl;
     // 非阻塞读取，所以要循环读取
-    const int num = 1024;
+    const int num = 102400; // ?
     bool is_read_err = false;
     while (true) {
         char buffer[num];
@@ -103,8 +103,9 @@ void connector_to_connector(connection* conn) {
                 break;
             }
         } else if (n == 0) {
-            // logMessage(DEBUG, "client %d quit, server close %d", conn->__fd, conn->__fd);
+            logMessage(DEBUG, "client %d quit, server close %d\n", conn->__fd, conn->__fd);
             conn->__except_callback(conn);
+            conn->__tsvr->__quit_signal = true; // 写端关闭，直接退出
             is_read_err = true;
             break;
         }
@@ -112,7 +113,7 @@ void connector_to_connector(connection* conn) {
         buffer[n] = 0;
         conn->__in_buffer += buffer; // 放到缓冲区里面就行了
     } // end while
-    logMessage(DEBUG, "recv done, the inbuffer: %s", conn->__in_buffer.c_str());
+    // logMessage(DEBUG, "recv done, the inbuffer: %s", conn->__in_buffer.c_str());
     if (is_read_err == true)
         return;
     // 前面的读取没有出错
@@ -136,9 +137,20 @@ void callback(connection* conn) {
     std::random_device rd; // 随机数发生器
     std::mt19937 gen(rd()); // 以 rd() 为种子的 Mersenne Twister 生成器
     std::uniform_int_distribution<> distrib(0, connector_to_worker_fds.size() - 1); // 分布在有效索引范围内
-
-    auto q = conn->__tsvr->__local_cache;
+    auto& q = conn->__tsvr->__local_cache; // 这里一定要引用
+    std::cout << "queue size: " << q.size() << std::endl;
     std::string buffer;
+// check queue
+#if false
+    std::cout << "--------------------------------------" << std::endl;
+    while(!q.empty()) {
+        std::string single_msg = q.front() + "\n\r\n";
+        std::cout << single_msg << std::endl;
+        q.pop();
+    }
+    exit(1);
+    std::cout << "--------------------------------------" << std::endl;
+#endif
     while (!q.empty()) {
         // 访问队列前端的元素
         std::string single_msg = q.front() + "\n\r\n";
@@ -181,8 +193,8 @@ int main(int argc, char** argv) {
     assert(connector_to_connector_fd >= 0); // 文件打开失败
     // 3. 创建3个管道文件
     auto out = get_client_worker_fifo(WORKER_NUMBER, serverIpcRootPath);
-    std::vector<int> worker_fds = out.first;
-    std::vector<int> connector_to_worker_fds = out.second;
+    std::vector<int> connector_to_worker_fds = out.first;
+    std::vector<int> worker_fds = out.second;
     // 3. 管道文件fd传给tc对象
     poll_control* pc = new poll_control(worker,
         connector_to_worker,
@@ -196,6 +208,7 @@ int main(int argc, char** argv) {
     for (auto e : connector_to_worker_fds)
         close(e);
     // 5. 删除管道文件
+    delete_fifo(WORKER_NUMBER, serverIpcRootPath);
     unlink("../Utils/fifo.ipc");
     return 0;
 }

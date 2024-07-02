@@ -2,10 +2,10 @@
 all:client server
 
 client:./Client/client.cc
-	g++ -o $@ $^ -std=c++11;
+	g++ -o $@ $^ -std=c++11 -g;
 	mv client Client
 server:./Server/server.cc
-	g++ -o $@ $^ -std=c++11
+	g++ -o $@ $^ -std=c++11 -g;
 	mv server Server
 
 .PHONY:clean
