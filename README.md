@@ -1,9 +1,12 @@
 # 基于事件驱动的管道通信系统框架
 
+![](./assets/6.png)
+
 - [基于事件驱动的管道通信系统框架](#基于事件驱动的管道通信系统框架)
   - [复用该Reactor模式框架的方法](#复用该reactor模式框架的方法)
   - [项目基本框架](#项目基本框架)
   - [项目基本信息](#项目基本信息)
+  - [如何运行本项目?](#如何运行本项目)
   - [不同lambda组合实验](#不同lambda组合实验)
   - [文件目录结构](#文件目录结构)
   - [客户端和服务端执行流程](#客户端和服务端执行流程)
@@ -16,11 +19,15 @@
     - [`__recver`, `__sender`和`__excepter`实现](#__recver-__sender和__excepter实现)
     - [开启写事件的关心 `enable_read_write`](#开启写事件的关心-enable_read_write)
   - [client和server分别提供的worker方法和callback方法](#client和server分别提供的worker方法和callback方法)
+    - [client的worker和callback](#client的worker和callback)
+    - [server的worker和callback](#server的worker和callback)
   - [设置ET模式的非阻塞](#设置et模式的非阻塞)
+    - [基本概念](#基本概念)
+    - [为什么ET模式一定要是非阻塞的读取才行](#为什么et模式一定要是非阻塞的读取才行)
+    - [设置文件描述符为非阻塞](#设置文件描述符为非阻塞)
   - [消息结构和粘包处理-序列化与反序列化-报头实现](#消息结构和粘包处理-序列化与反序列化-报头实现)
   - [文件描述符的封装](#文件描述符的封装)
-  - [`poll.hpp`多路转接的封装](#pollhpp多路转接的封装)
-  - [`log.hpp`和`thread.hpp`的封装](#loghpp和threadhpp的封装)
+  - [`poll.hpp`多路转接的封装, `log.hpp`和`thread.hpp`的封装](#pollhpp多路转接的封装-loghpp和threadhpp的封装)
   - [负值数控制](#负值数控制)
 
 
@@ -43,6 +50,31 @@
 - **通过我这种方式的设计，每一个worker线程分配一个管道，可以做到无锁实现，加上epoll的多路转接性能，这个通信框架是一个高效的IO过程。**
 - **封装linux中epoll的相关操作到 `./Utils/poll.hpp`中，增加代码的可读性。**
 - 封装该项目的核心对象`class poll_control`。本质上是一个reactor服务。客户端和服务端均可复用这个对象的代码，管理所需要的线程，和线程所对应需要做的函数回调。**这个对象我认为是本次项目的核心所在，它可以避免在客户端进程和服务端进程中，分别编写控制线程的逻辑，使得线程控制的逻辑从客户端和服务端中解耦出来，大大减少代码的冗余，大大提高了代码的二次开发潜力。具体核心实现可以见见 `./Utils/poll_control.hpp`。**
+
+## 如何运行本项目?
+
+克隆这个仓库：
+```bash
+https://github.com/ffengc/Event-Driven-Pipeline-Communication-System-Framework
+```
+进入这个仓库：
+```bash
+cd Event-Driven-Pipeline-Communication-System-Framework;
+```
+编译：
+```bash
+make clean;make
+```
+打开第一个终端，进入server目录启动服务端：
+```bash
+cd Server; ./server 1
+```
+打开第二个终端，进入client目录启动客户端：
+```bash
+cd Client; ./client 1
+```
+
+![](./assets/3.png)
 
 ## 不同lambda组合实验
 
@@ -431,18 +463,270 @@ void loop_once() {
 
 ### 开启写事件的关心 `enable_read_write`
 
-
+```cpp
+    void enable_read_write(connection* conn, bool readable, bool writable) {
+        uint32_t events = (readable ? EPOLLIN : 0) | (writable ? EPOLLOUT : 0);
+        if (!__poll.control_poll(conn->__fd, events))
+            logMessage(ERROR, "trigger write event fail");
+    }
+```
+这个函数会被当epoll获取到读事件后，进行回调后被调用。因为在本项目中，epoll如果获取到了读事件，就会需要把数据写到cache里，然后发送到另一条管道里，因此需要允许写事件的发生。然后前面也提到了epoll是只默认关心读事件的，因此写事件需要手动开启。
 
 ## client和server分别提供的worker方法和callback方法
 
+### client的worker和callback
+
+对于client来说，worker的工作就是按照一定规律生产数据，并传输到对应的文件描述符上。
+思路是非常简单的，直接实现即可，使用write把数据写到管道中去，当然，需要序列化消息和加上报头。
+
+```cpp
+void* worker(void* args) {
+    __thread_data* td = (__thread_data*)args;
+    poll_control* pc = (poll_control*)td->__args;
+    // 在这里构造Task
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::exponential_distribution<> dist(pc->__lambda); // 这里用命令行传递过来的参数
+    size_t mesg_number = 0;
+    while (true) {
+        mesg_number++;
+        double interval = dist(gen); // 生成符合负指数分布的随机数
+        unsigned int sleepTime = static_cast<unsigned int>(std::floor(interval)); // 负指数
+        sleep(sleepTime);
+        // 这里要生成一条数据
+        struct message msg;
+        msg.mesg_number = mesg_number;
+        msg.src_tid = pthread_self();
+        memset(msg.data, '0', sizeof(msg.data));
+        // 现在数据已经生成好了，现在需要发给conn，通过管道的方式，那么这个管道的fd在哪？
+        std::cout << "generate a mesg[" << mesg_number << "], src_tid: " << msg.src_tid << std::endl;
+        int cur_fd = pc->__worker_thread_name_fd_map[td->__name]; // 所以只需要把信息放到cur_fd的管道里面就可以了
+        // 在把消息放进去之前，先encode一下，协议定制！
+        std::string encoded = encode(msg) + "\n\r\n"; // "\n\r\n" 就是防止粘包的标识
+        // 写到管道中去
+        write(cur_fd, encoded.c_str(), encoded.size());
+        if (mesg_number >= MESG_NUMBER) {
+            // 最多发MESG_NUMBER条消息
+            pc->__worker_finish_count++; // 设置退出信号
+            break;
+        }
+    }
+    return nullptr;
+}
+```
+
+对于client的callback，就是epoll获取到读事件之后，把东西从cache中放到写管道的过程，并调用 `enable_read_write` 允许写事件触发。
+
+```cpp
+void callback(connection* conn) {
+    auto& q = conn->__tsvr->__local_cache;
+    std::string buffer;
+    while (!q.empty()) {
+        // 访问队列前端的元素
+        std::string single_msg = q.front();
+        buffer += single_msg + "\n\r\n";
+        q.pop();
+    }
+    // 此时buffer里就是要发送的数据了，发送的fd是哪个？conn->__tsvr->__connector_to_connector_fd
+    auto send_conn = conn->__tsvr->__connection_map[conn->__tsvr->__connector_to_connector_fd];
+    send_conn->__out_buffer += buffer;
+    conn->__tsvr->enable_read_write(send_conn, true, true); // 允许写!
+}
+```
+
+### server的worker和callback
+
+server的worker就是从管道中获取事件并打印出来，callback和client基本上是一样的，只是有细微区别。对于client来说，epoll只需要往一个fd中写入数据，但是对于server来说，如结构图所示，需要往3个fd中平均写入，控制这里的逻辑非常简单，可以直接看代码，这里不再解释。
+
 ## 设置ET模式的非阻塞
+
+这一部分更详细的解释可以参考我的个人博客：[work_reactor.html](https://ffengc.github.io/gh-blog/blogs/reactor-server/work_reactor.html)
+
+### 基本概念
+
+epoll有两种工作模式，水平触发（LT）和边缘触发（ET）
+
+- LT模式: 如果我手里有你的数据，我就会一直通知 
+- ET模式: 只有我手里你数据是首次到达，从无到有，从有到多(变化)的时候，我才会通知你
+
+**细节:**
+
+我为什么要听ET模式的?凭什么要立刻去走？我如果不取，底层再也不通知了，上层调用就 无法获取该fd的就绪事件了，无法再调用recv， 数据就丢失了。倒逼程序员，如果数据就绪， 就必须一次将本轮就绪的数据全部取走。
+
+我可以暂时不处理LT中就绪的数据吗?可以! 因为我后面还有读取的机会。
+
+如果LT模式，我也一次将数据取完的话，LT和ET的效率是没有区别的。
+
+ET模式为什么更高效?
+
+更少的返回次数（毕竟一次epoll_wait都是一次内核到用户）
+
+ET模式会倒逼程序员尽快将缓冲区中的数据全部取走，应用层尽快的去走了缓冲区中的数据，那么在单位时间下，该模式下工作的服务器，就可以在一定程度上，给发送方发送一 个更大的接收窗口，所以对方就可以拥有一个工大的滑动窗 口，一次向我们发送更多的数据，提高IO吞吐。
+
+### 为什么ET模式一定要是非阻塞的读取才行
+
+结论：et模式一定要是非阻塞读取。为什么？
+
+首先，et模式要一次全部读完！怎么才能一次读完呢？我都不知道有多少，怎么保证一次读完？所以我们要连续读，一直读！循环读！读到没有数据为止！
+
+ok！读到没有数据, recv就会阻塞！这就不行了，我们不允许阻塞！
+
+所以怎么办？把这个sock设置成非阻塞的sock，这种sock有个特点：一直读，读到没数据了，不阻塞！直接返回报错，报一个错误：EAGAIN。而这个EAGAIN，可以告诉我们，读完了！
+
+### 设置文件描述符为非阻塞
+
+可以直接调用系统调用`fcntl`
+
+![](./assets/2.png)
+
+```cpp
+    static bool set_non_block_fd(int fd) { // 文件描述符设置为非阻塞的文件描述符
+        int fl = fcntl(fd, F_GETFL);
+        if (fl < 0)
+            return false;
+        fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+        return true;
+    }
+```
 
 ## 消息结构和粘包处理-序列化与反序列化-报头实现
 
+消息结构：
+
+```cpp
+struct message {
+    size_t mesg_number;
+    uint64_t src_tid; // 8个字节
+    char data[4096]; // 4096个字节
+};
+```
+
+序列化方法：
+
+```cpp
+std::string encode(const message& msg) {
+    std::ostringstream out;
+    // 编码 mesg_number 和 src_tid 为十六进制字符串
+    out << std::hex << msg.mesg_number << '|' << msg.src_tid << '|';
+    // 编码 data，处理特殊字符
+    for (int i = 0; i < 4096; i++) {
+        if (std::isprint(msg.data[i]) && msg.data[i] != '%') {
+            out << msg.data[i];
+        } else {
+            out << '%' << std::setw(2) << std::setfill('0') << std::hex << (unsigned int)(unsigned char)msg.data[i];
+        }
+    }
+    return out.str();
+}
+```
+
+反序列化方法：
+
+```cpp
+// 反序列化
+bool decode(const std::string& serialized, message& msg) {
+    std::istringstream in(serialized);
+    std::string mesg_number_hex, tid_hex;
+    if (!std::getline(in, mesg_number_hex, '|') || !std::getline(in, tid_hex, '|'))
+        return false;
+    // 解析 mesg_number
+    std::istringstream mesg_number_stream(mesg_number_hex);
+    mesg_number_stream >> std::hex >> msg.mesg_number;
+    // 解析 src_tid
+    std::istringstream tid_stream(tid_hex);
+    tid_stream >> std::hex >> msg.src_tid;
+    // 解析 data
+    std::string data;
+    std::getline(in, data); // 读取剩余部分作为 data
+    size_t i = 0, j = 0;
+    while (i < data.size() && j < 4096) {
+        if (data[i] == '%' && i + 2 < data.size()) {
+            std::istringstream hex_char(data.substr(i + 1, 2));
+            int value;
+            hex_char >> std::hex >> value;
+            msg.data[j++] = static_cast<char>(value);
+            i += 3; // 跳过 "%XX"
+        } else {
+            msg.data[j++] = data[i++];
+        }
+    }
+    return true;
+}
+```
+
+报文分割符设置为: `\n\r\n`
+
+分割报文方法：
+```cpp
+std::vector<std::string> extract_messages(std::string& buffer) {
+    std::vector<std::string> messages;
+    std::string delimiter = "\n\r\n";
+    size_t pos = 0;
+    std::string token;
+    while ((pos = buffer.find(delimiter)) != std::string::npos) {
+        token = buffer.substr(0, pos);
+        messages.push_back(token);
+        buffer.erase(0, pos + delimiter.length());
+    }
+    return messages;
+}
+```
+
 ## 文件描述符的封装
 
-## `poll.hpp`多路转接的封装
+为什么需要封装fd:
 
-## `log.hpp`和`thread.hpp`的封装
+因为读取是非阻塞的，所以需要对报文做切割处理，因为是非阻塞读取，所以epoll在某个fd进行读取时候是会一次性读完的！读完的字节流可能含有多个报文，因此需要一个缓冲区，来做报文切割的任务，因此每一个fd都需要配套一个缓冲区。除此之外每一个fd的三种就绪事件对应的回调，也应该整合起来，因此把fd封装成 `connection` 类型。这个类型最关键的，就是三种回调方法，输入缓冲区和输出缓冲区。其余还有一些细节，比如回指指针等等。
+
+封装后结构如下所示：
+
+```cpp
+class poll_control;
+class connection;
+using func_t = std::function<void(connection*)>;
+using callback_t = std::function<void(connection*)>; // 业务逻辑
+/**
+ * 对于client来说callback负责把cache的东西，放到发送的文件描述符中的out_buffer里去
+ * 对于server来说callback就是把cache的东西，平均分配到3个worker线程对应的pipe_fd的out_buffer里去
+ */
+class connection {
+public:
+    connection(int fd = -1)
+        : __fd(fd)
+        , __tsvr(nullptr) { }
+    ~connection() { }
+    void set_callback(func_t recv_cb, func_t send_cb, func_t except_cb) {
+        __recv_callback = recv_cb;
+        __send_callback = send_cb;
+        __except_callback = except_cb;
+    }
+
+public:
+    int __fd; // io的文件描述符
+    func_t __recv_callback;
+    func_t __send_callback;
+    func_t __except_callback;
+    std::string __in_buffer; // 输入缓冲区（暂时没有处理二进制流）
+    std::string __out_buffer; // 输出缓冲区
+    poll_control* __tsvr; // 回指指针
+};
+```
+
+## `poll.hpp`多路转接的封装, `log.hpp`和`thread.hpp`的封装
+
+可以直接看代码，这里都是一些比较简单的封装。
 
 ## 负值数控制
+
+使用C++11随机数生成的方法进行控制。
+
+```cpp
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::exponential_distribution<> dist(pc->__lambda); // 这里用命令行传递过来的参数
+    double interval = dist(gen); // 生成符合负指数分布的随机数
+    unsigned int sleepTime = static_cast<unsigned int>(std::floor(interval)); // 负指数
+    sleep(sleepTime);
+```
+
+通过这种方法可以控制负指数生成的逻辑。
