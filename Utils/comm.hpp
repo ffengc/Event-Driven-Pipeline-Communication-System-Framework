@@ -72,6 +72,7 @@ enum {
     SERVER
 };
 using PC_MODE = int;
+#define EPOLL_EVENT_MAX_NUM 128
 
 // ----------------------------------- 通信相关配置 -----------------------------------
 #define MESG_NUMBER 10 // 定义发n条消息之后，Client自动退出

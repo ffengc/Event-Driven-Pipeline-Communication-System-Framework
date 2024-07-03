@@ -56,16 +56,13 @@ public:
 
 class poll_control {
 public:
-    const static int gnum = 128; // 获取epoll继续事件的数量
-    bool __quit_signal = false;
-
-public:
     // conn的多路转接配置
     __epoll __poll; // 这里直接维护一个epoll
-    std::unordered_map<int, connection*> __connection_map;
     struct epoll_event* __revs;
     int __revs_num;
-
+    std::unordered_map<int, connection*> __connection_map; // fd->conn的map
+public:
+    bool __quit_signal = false; // pc对象退出信号
 public:
     // worker和connector的逻辑，connector一个，worker有n个
     std::vector<thread*> __worker_threads; // worker线程
@@ -73,13 +70,13 @@ public:
     double __lambda; // 负指数参数，消费频率/生产频率
     std::unordered_map<std::string, int> __worker_thread_name_fd_map;
     // 存储一下7个文件描述符
-    std::vector<int> __worker_fds;
-    std::vector<int> __connector_to_worker_fds;
-    int __connector_to_connector_fd;
+    std::vector<int> __worker_fds; // worker线程需要关心的fd
+    std::vector<int> __connector_to_worker_fds; // epoll需要关心的和worker通信的fd
+    int __connector_to_connector_fd; // epoll需要关心的和核心管道通信的fd
     std::queue<std::string> __local_cache; // 本地缓冲区
-    callback_t __callback;
+    callback_t __callback; // server和client传进来的回调
     PC_MODE __mode; // 当前是client端还是server端?
-    size_t __worker_finish_count;
+    size_t __worker_finish_count; // worker线程完成任务的数量
 
 public:
     poll_control(void* (*worker)(void*) = nullptr, // worker 线程要做的事
@@ -94,7 +91,7 @@ public:
         , __connector_to_worker_fds(connector_to_worker_fds)
         , __connector_to_connector_fd(connector_to_connector_fd)
         , __poll(0) /* 这里给poll设置非阻塞 */
-        , __revs_num(gnum)
+        , __revs_num(EPOLL_EVENT_MAX_NUM)
         , __worker_thread_num(worker_number)
         , __lambda(lambda)
         , __mode(mode)
@@ -104,6 +101,7 @@ public:
         assert(worker != nullptr && callback != nullptr); // 检查回调非空
         assert(worker_number == worker_fds.size()); // 检查worker数量和管道fd数量是否相同
         assert(worker_number == connector_to_worker_fds.size() && worker_number == worker_fds.size());
+        assert(mode != -1);
         // 1. 创建worker线程
         for (int i = 1; i <= __worker_thread_num; i++) // 三个线程去进行worker任务
         {
