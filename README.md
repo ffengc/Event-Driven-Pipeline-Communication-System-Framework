@@ -1,86 +1,113 @@
-# 基于事件驱动的管道通信系统框架
+# Event-Driven-Pipeline-Communication-System-Framework
 
 ![](./assets/6.png)
 
-- [基于事件驱动的管道通信系统框架](#基于事件驱动的管道通信系统框架)
-  - [复用该Reactor模式框架的方法](#复用该reactor模式框架的方法)
-  - [项目基本框架](#项目基本框架)
-  - [项目基本信息](#项目基本信息)
-  - [如何运行本项目?](#如何运行本项目)
-  - [不同lambda组合实验](#不同lambda组合实验)
-  - [文件目录结构](#文件目录结构)
-  - [客户端和服务端执行流程](#客户端和服务端执行流程)
-  - [`poll_control` 核心实现，即 Reactor 转发服务的实现](#poll_control-核心实现即-reactor-转发服务的实现)
-    - [所有成员变量解释](#所有成员变量解释)
-    - [所有成员函数解释](#所有成员函数解释)
-    - [构造函数执行流程](#构造函数执行流程)
-    - [添加文件描述符到多路转接中](#添加文件描述符到多路转接中)
-    - [转发服务](#转发服务)
-    - [`__recver`, `__sender`和`__excepter`实现](#__recver-__sender和__excepter实现)
-    - [开启写事件的关心 `enable_read_write`](#开启写事件的关心-enable_read_write)
-  - [client和server分别提供的worker方法和callback方法](#client和server分别提供的worker方法和callback方法)
-    - [client的worker和callback](#client的worker和callback)
-    - [server的worker和callback](#server的worker和callback)
-  - [设置ET模式的非阻塞](#设置et模式的非阻塞)
-    - [基本概念](#基本概念)
-    - [为什么ET模式一定要是非阻塞的读取才行](#为什么et模式一定要是非阻塞的读取才行)
-    - [设置文件描述符为非阻塞](#设置文件描述符为非阻塞)
-  - [消息结构和粘包处理-序列化与反序列化-报头实现](#消息结构和粘包处理-序列化与反序列化-报头实现)
-  - [文件描述符的封装](#文件描述符的封装)
-  - [`poll.hpp`多路转接的封装, `log.hpp`和`thread.hpp`的封装](#pollhpp多路转接的封装-loghpp和threadhpp的封装)
-  - [负值数控制](#负值数控制)
+***
+
+<div align="center">
+<a href="https://github.com/ffengc">
+    <img src="https://img.shields.io/static/v1?label=Github&message=ffengc&color=blue" alt="ffengc.github">
+</a>
+<a href="https://ffengc.github.io">
+    <img src="https://img.shields.io/static/v1?label=Page&message=ffengc.github.io&color=red" alt="ffengc.github.io">
+</a>
+<a href="https://ffengc.github.io/gh-blog/">
+    <img src="https://img.shields.io/static/v1?label=Blog&message=Blog Page&color=brightgreen" alt="Mutable.ai Auto Wiki">
+</a>
+</div>
+<br/>
+
+- [English](./README.md)
+- [简体中文](./docs/README-cn.md)
+
+***
+
+- [Event-Driven-Pipeline-Communication-System-Framework](#event-driven-pipeline-communication-system-framework)
+  - [📚How to reuse this framework?](#how-to-reuse-this-framework)
+  - [🎆Framework](#framework)
+  - [🏷️Basic information of the project](#️basic-information-of-the-project)
+  - [💻How to run?](#how-to-run)
+  - [🧪Experiments with different lambda combinations](#experiments-with-different-lambda-combinations)
+  - [📁File directory structure](#file-directory-structure)
+  - [Client and server execution process](#client-and-server-execution-process)
+  - [`poll_control` core implementation, that is, the implementation of Reactor forwarding service](#poll_control-core-implementation-that-is-the-implementation-of-reactor-forwarding-service)
+    - [Explanation of all member variables](#explanation-of-all-member-variables)
+    - [Explanation of all member functions](#explanation-of-all-member-functions)
+    - [Constructor execution flow](#constructor-execution-flow)
+    - [Add a file descriptor to the multiplexer](#add-a-file-descriptor-to-the-multiplexer)
+    - [Dispathering](#dispathering)
+    - [`__recver`, `__sender` and`__excepter`](#__recver-__sender-and__excepter)
+    - [Enable write event care `enable_read_write`](#enable-write-event-care-enable_read_write)
+  - [The worker method and callback method provided by the client and server respectively](#the-worker-method-and-callback-method-provided-by-the-client-and-server-respectively)
+    - [Client workers and callbacks](#client-workers-and-callbacks)
+    - [Server workers and callbacks](#server-workers-and-callbacks)
+  - [Set ET mode to non-blocking](#set-et-mode-to-non-blocking)
+    - [Basic concept](#basic-concept)
+    - [Why does ET mode have to be non-blocking reading?](#why-does-et-mode-have-to-be-non-blocking-reading)
+    - [Set the file descriptor to non-blocking](#set-the-file-descriptor-to-non-blocking)
+  - [Message structure and sticky packet processing-serialization and deserialization-header implementation](#message-structure-and-sticky-packet-processing-serialization-and-deserialization-header-implementation)
+  - [File descriptor encapsulation](#file-descriptor-encapsulation)
+  - [`poll.hpp` multiplexing wrapper, `log.hpp` and `thread.hpp` wrapper](#pollhpp-multiplexing-wrapper-loghpp-and-threadhpp-wrapper)
+  - [Negative index control](#negative-index-control)
 
 
-## 复用该Reactor模式框架的方法
+## 📚How to reuse this framework?
 
-该通信框架不仅可以适用于进程间通信，还可以用于网络服务等其他通信，具体方法如下文件。
+This communication framework can be used not only for inter-process communication, but also for other communications such as network services. The specific method is as follows.
 
-- **[reuse.md](./docs/reuse.md)**
+- **[reuse.md](./docs/reuse-en.md)**
 
-## 项目基本框架
+## 🎆Framework
 
-![](./assets/1.png)
+![](./assets/1-en.png)
 
-## 项目基本信息
+## 🏷️Basic information of the project
 
-- 实现了大作业要求上的所有功能，包括客户端和服务端的通信，客户端起3个worker线程(可以用参数指定数量)产生特定要求的数据，然后分别通过自己的管道，传输给client中pc对象中的epoll服务中，与此同时，epoll服务已经正在关心管道另一端的读事件了，因此worker把数据发送到管道中，epoll服务中，就会出现一个读事件就绪，epoll服务获取到数据之后，会放到cache中，然后启动epoll服务对写事件的关心，此时，client的epoll服务就会把数据传输到server上。server上的数据流动流程和client端是相同的。具体细节我会在后续讲解。
-- 生产和消费按照负指数规律进行，参数lambda通过两个进程的命令行传参指定。
-- 程序按照要求带有makefile文件，方便编译。另外按照手册要求，生产者产生的数据需要带有进程标签和线程标签。
-- 封装日志功能 `./Utils/Log.hpp`，区分日志的等级。方便debug和调试。
-- **通过我这种方式的设计，每一个worker线程分配一个管道，可以做到无锁实现，加上epoll的多路转接性能，这个通信框架是一个高效的IO过程。**
-- **封装linux中epoll的相关操作到 `./Utils/poll.hpp`中，增加代码的可读性。**
-- 封装该项目的核心对象`class poll_control`。本质上是一个reactor服务。客户端和服务端均可复用这个对象的代码，管理所需要的线程，和线程所对应需要做的函数回调。**这个对象我认为是本次项目的核心所在，它可以避免在客户端进程和服务端进程中，分别编写控制线程的逻辑，使得线程控制的逻辑从客户端和服务端中解耦出来，大大减少代码的冗余，大大提高了代码的二次开发潜力。具体核心实现可以见见 `./Utils/poll_control.hpp`。**
+- All functions required by the big job are realized, including the communication between the client and the server. The client starts 3 worker threads (the number can be specified by parameters) to generate specific data, and then transmits them to the epoll service in the pc object in the client through their own pipes. At the same time, the epoll service is already paying attention to the read event at the other end of the pipe, so the worker sends the data to the pipe, and a read event will appear in the epoll service. After the epoll service obtains the data, it will be put into the cache, and then the epoll service will start paying attention to the write event. At this time, the client's epoll service will transfer the data to the server. The data flow process on the server is the same as that on the client. I will explain the details later.
+- Production and consumption follow the negative exponential law, and the parameter lambda is specified through the command line parameters of the two processes.
+- The program is required to come with a makefile for easy compilation. In addition, according to the manual requirements, the data generated by the producer needs to have process labels and thread labels.
+- Encapsulate the log function `./Utils/Log.hpp` and distinguish the log levels. It is convenient for debugging.
+- **Through my design, each worker thread is assigned a pipeline, which can achieve lock-free implementation. Combined with the multiplexing performance of epoll, this communication framework is an efficient IO process.**
+- **Encapsulate the related operations of epoll in Linux into `./Utils/poll.hpp` to increase the readability of the code.**
+- Encapsulates the core object of this project, `class poll_control`. It is essentially a reactor service. Both the client and the server can reuse the code of this object to manage the required threads and the function callbacks that need to be made by the threads. **I think this object is the core of this project. It can avoid writing the logic of controlling threads separately in the client process and the server process, so that the logic of thread control is decoupled from the client and the server, greatly reducing the redundancy of the code and greatly improving the potential for secondary development of the code. The specific core implementation can be seen in `./Utils/poll_control.hpp`.**
 
-## 如何运行本项目?
+## 💻How to run?
 
-克隆这个仓库：
+clone this repo
+
 ```bash
 https://github.com/ffengc/Event-Driven-Pipeline-Communication-System-Framework
 ```
-进入这个仓库：
+
+Enter this repository:
+
 ```bash
 cd Event-Driven-Pipeline-Communication-System-Framework;
 ```
-编译：
+
+make
+
 ```bash
 make clean;make
 ```
-打开第一个终端，进入server目录启动服务端：
+
+Open the first terminal, enter the server directory and start the server:
 ```bash
 cd Server; ./server 1
 ```
-打开第二个终端，进入client目录启动客户端：
+
+Open the second terminal, enter the client directory and start the client:
 ```bash
 cd Client; ./client 1
 ```
 
 ![](./assets/3.png)
 
-## 不同lambda组合实验
+## 🧪Experiments with different lambda combinations
 
-- **[exp.md](./docs/exp.md)**
+- **[exp.md](./docs/exp-en.md)**
 
-## 文件目录结构
+## 📁File directory structure
 
 ```bash
 ├── Client/client.cc
@@ -92,58 +119,58 @@ cd Client; ./client 1
 └── temp/use-to-save-fifo-files
 ```
 
-其中，`client.cc` 是客户端主函数文件，`server.cc` 是服务端主函数文件，`comm.hpp` 是一些宏，常数和一些工具函数的定义，`epoll_control` 是核心对象 pc 对象的定义，`log.hpp` 是对日志的封装，`thread.hpp` 是对原生线程的封装。`temp` 目录用于存放程序运行时临时的 `.ipc` 管道文件。
+Among them, `client.cc` is the client main function file, `server.cc` is the server main function file, `comm.hpp` is the definition of some macros, constants and some tool functions, `epoll_control` is the definition of the core object pc object, `log.hpp` is the encapsulation of logs, and `thread.hpp` is the encapsulation of native threads. The `temp` directory is used to store temporary `.ipc` pipe files when the program is running.
 
-## 客户端和服务端执行流程
+## Client and server execution process
 
-**客户端**
+**Client**
 
-对于客户端来说，首先需要检查命令行参数熟练是否正确，否则通过 `Usage()` 输出提示，并结束进程。下一步就是准备好所有的文件描述符了，这一步是非常关键的步骤。如果设置worker的数量为3（实验手册要求的数量），则和客户端相关的管道一共有4个，其中一个是用来与server通信的核心管道，另外三个就是worker线程配套的管道了，用于worker和client中的epoll服务进行通信。**因此，对于客户端来说，客户端进程需要创建3个有名管道（服务端是4个，client-server的核心管道不需要client创建，server负责创建）。 因此可以得出结论，client端需要维护的文件描述符共有7个，3个管道的两端共6个，核心管道的写端1个。**
+For the client, first you need to check whether the command line parameters are correct, otherwise output a prompt through `Usage()` and end the process. The next step is to prepare all the file descriptors, which is a very critical step. If the number of workers is set to 3 (the number required by the experimental manual), there are a total of 4 pipes related to the client, one of which is the core pipe used to communicate with the server, and the other three are pipes supporting the worker threads, which are used for communication between the worker and the epoll service in the client. **Therefore, for the client, the client process needs to create 3 named pipes (the server has 4, and the client-server core pipe does not need to be created by the client, the server is responsible for creating it). Therefore, it can be concluded that the client side needs to maintain a total of 7 file descriptors, 6 at both ends of the 3 pipes, and 1 at the write end of the core pipe.**
 
-**如结构图所示，当开启了client端的pc对象之后，worker应该向5，7，9三个fd中进行写入，client的epoll应该监听4，6，8三个fd上的读事件！当获取到4，6，8到读事件就绪之后，应该把数据放到cache中，然后开启文件描述符fd为3的写事件就绪。**
+**As shown in the structure diagram, after the client's pc object is opened, the worker should write to the three fds 5, 7, and 9, and the client's epoll should listen to the read events on the three fds 4, 6, and 8! When the read events 4, 6, and 8 are obtained, the data should be put into the cache, and then the write event of file descriptor fd 3 should be opened.**
 
-代码如下所示。
+The code is shown below.
 ```cpp
 int main(int argc, char** argv) {
     if (argc != 2) {
         Usage();
         exit(1);
     }
-    // 0. 提取命令行参数
+    // 0. Extracting command line arguments
     double lambda_arg = std::stod(argv[1]);
-    // 1. 获取管道文件和对应的文件描述符，一共4个管道，7个fd
-    // 1.1 c->c的fd
-    int connector_to_connector_fd = open(ipcPath.c_str(), O_WRONLY | O_NONBLOCK); // 按照写的方式打开
-    //      这个管道文件不需要client创建，client只需要创建3个管道，server需要创建4个管道
+    // 1. Get the pipe file and the corresponding file descriptor, a total of 4 pipes, 7 fd
+    // 1.1 c->fd of c
+    int connector_to_connector_fd = open(ipcPath.c_str(), O_WRONLY | O_NONBLOCK); // Open as written
+    //      This pipeline file does not need to be created by the client. The client only needs to create 3 pipelines, and the server needs to create 4 pipelines.
     assert(connector_to_connector_fd >= 0);
-    // 1.2 c->w的fd
+    // 1.2 c->w's fd
     auto out = get_client_worker_fifo(WORKER_NUMBER, clientIpcRootPath);
     std::vector<int> worker_fds = out.first;
     std::vector<int> connector_to_worker_fds = out.second;
-    // 2. 构造并运行pc对象
+    // 2. Construct and run the pc object
     poll_control* pc = new poll_control(worker,
         callback, WORKER_NUMBER, worker_fds, connector_to_worker_fds, connector_to_connector_fd, lambda_arg, CLIENT);
     pc->dispather();
-    // 3. 关闭管道文件
+    // 3. Close the pipe file
     close(connector_to_connector_fd);
     for (auto e : worker_fds)
         close(e);
     for (auto e : connector_to_worker_fds)
         close(e);
-    // 4. 删掉三个管道文件
+    // 4. Delete the three pipeline files
     delete_fifo(WORKER_NUMBER, clientIpcRootPath);
     return 0;
 }
 ```
 
-为了代码的可读性，我封装了创建管道生成fd的函数，如下所示：
+For the readability of the code, I encapsulated the function that creates the pipe to generate fd as follows:
 
 ```cpp
 auto out = get_client_worker_fifo(WORKER_NUMBER, clientIpcRootPath);
 ```
 
-这个函数`get_client_worker_fifo`放到了`comm.hpp`下，server端也可以使用这一份代码。
-`WORKER_NUMBER`是worker的数量，`clientIpcRootPath`是这个管道文件应该存放的路径。
+This function `get_client_worker_fifo` is placed in `comm.hpp`, and the server can also use this code.
+`WORKER_NUMBER` is the number of workers, and `clientIpcRootPath` is the path where this pipeline file should be stored.
 
 ```cpp
 std::string serverIpcRootPath = "../temp/server_fifo"; // server_fifo1.ipc, server_fifo2.ipc ...
@@ -152,110 +179,110 @@ std::vector<int> worker_fds = out.first;
 std::vector<int> connector_to_worker_fds = out.second;
 ```
 
-`get_client_worker_fifo`会根据worker线程的数量，来生成对应数量的管道，并返回特定数量的读端和写端的文件描述符，具体可以见代码细节和`README.md`。由于篇幅原因这里不再解释了。
+`get_client_worker_fifo` will generate the corresponding number of pipes according to the number of worker threads, and return a specific number of read and write file descriptors. For details, please refer to the code details and `README.md`. Due to space constraints, I will not explain it here.
 
-拿到管道的这些信息和文件描述符之后，就可以直接构造pc对象并开启reactor的转发服务了。
+After getting the information and file descriptors of the pipes, you can directly construct the pc object and start the reactor forwarding service.
 
 ```cpp
 poll_control* pc = new poll_control(worker, callback, WORKER_NUMBER, worker_fds, connector_to_worker_fds, connector_to_connector_fd, lambda_arg, CLIENT);
-pc->dispather(); // 开启转发
+pc->dispather(); // enable dispathering
 ```
 
-执行完转发之后，相应的删除管道，关闭文件描述符即可。
+After dispathering is completed, delete the pipe and close the file descriptor accordingly.
 
-**callback回调和worker回调**
+**Callback callback and worker callback**
 
-上面的代码可以看到还需要给pc对象提供worker回调和callback回调。对于worker来说，就是client下worker应该做的事情：生产数据，然后写到`worker_fds`中去，如果是server的worker，就应该是：从`worker_fds`的管道中拿数据，然后打印出来。
+From the above code, we can see that we also need to provide worker callback and callback callback to the pc object. For the worker, it is what the client worker should do: produce data and write it to `worker_fds`. If it is a server worker, it should be: get data from the `worker_fds` pipe and print it out.
 
-对于client的callback来说，就是client的epoll读事件就绪，获取到数据之后，需要调用的逻辑。对于client来说，读事件就绪之后，数据已经从`connector_to_worker_fds`拿出来之后，需要做的逻辑：即把数据丢到cache中去，然后启动写事件就绪！server也是同样的。
+For the client callback, it is the logic that needs to be called after the client's epoll read event is ready and the data is obtained. For the client, after the read event is ready and the data has been taken out from `connector_to_worker_fds`, the logic that needs to be done is: throw the data into the cache, and then start the write event ready! The server is the same.
 
-**服务端**
+**Server**
 
-服务端流程和客户端相同，这里不再重复解释。
+The server process is the same as the client process, so I will not repeat it here.
 
-## `poll_control` 核心实现，即 Reactor 转发服务的实现
+## `poll_control` core implementation, that is, the implementation of Reactor forwarding service
 
-### 所有成员变量解释
+### Explanation of all member variables
 
-- `__epoll __poll` pc对象维护的epoll，`__epoll`是在`epoll.hpp`中封装后的epoll类型，提供了epoll相关的操作，具体见第1.9节。
-- `struct epoll_event __revs;` 和 `int __revs_num;` 存储就绪事件的数组及其大小。
-- `std::unordered_map<int, connection*> __connection_map;` 从fd到对应的`connection`类型的映射。封装的原因见[here](#文件描述符的封装)所示。
-- `bool __quit_signal = false;` 控制pc对象退出的信号。
-- `std::vector<thread*> __worker_threads;` 和 `size_t __worker_thread_num;` worker线程及其数量。
-- `double __lambda;` 负指数参数，负值数控制见[here](#负值数控制)所示。
-- `std::unordered_map<std::string, int> __worker_thread_name_fd_map;` 维护一个从worker线程名称到对应fd的映射，因为每个worker线程需要知道与之对应的管道fd。
-- `std::vector<int> __worker_fds;` worker线程需要关注的fd。
-- `std::vector<int> __connector_to_worker_fds;` epoll需要关注的与worker通信的fd。
-- `int __connector_to_connector_fd;` epoll需要关注的与核心管道通信的fd。
-- `std::queue<std::string> __local_cache;` pc对象维护的缓存。
-- `callback_t __callback;` server和client传入的回调函数。
-- `PC_MODE __mode;` 用于判断当前是client端还是server端。
-- `size_t __worker_finish_count;` worker线程完成任务的数量，用于控制pc对象的退出。
+- `__epoll __poll` The epoll maintained by the pc object. `__epoll` is the epoll type encapsulated in `epoll.hpp`, which provides epoll-related operations, see Section 1.9 for details.
+- `struct epoll_event __revs;` and `int __revs_num;` store the array of ready events and their size.
+- `std::unordered_map<int, connection*> __connection_map;` Mapping from fd to the corresponding `connection` type. The reason for encapsulation is shown in [here](#Encapsulation of file descriptors).
+- `bool __quit_signal = false;` Controls the signal for the pc object to exit.
+- `std::vector<thread*> __worker_threads;` and `size_t __worker_thread_num;` Worker threads and their number.
+- `double __lambda;` Negative exponent parameter, negative number control see [here](#Negative number control) as shown.
+- `std::unordered_map<std::string, int> __worker_thread_name_fd_map;` Maintains a mapping from worker thread name to corresponding fd, because each worker thread needs to know the corresponding pipe fd.
+- `std::vector<int> __worker_fds;` The fd that the worker thread needs to pay attention to.
+- `std::vector<int> __connector_to_worker_fds;` The fd that epoll needs to pay attention to communicate with the worker.
+- `int __connector_to_connector_fd;` The fd that epoll needs to pay attention to communicate with the core pipe.
+- `std::queue<std::string> __local_cache;` The cache maintained by the pc object.
+- `callback_t __callback;` callback function passed by server and client.
+- `PC_MODE __mode;` is used to determine whether the current one is client or server.
+- `size_t __worker_finish_count;` the number of tasks completed by the worker thread, used to control the exit of the pc object.
 
-### 所有成员函数解释
+### Explanation of all member functions
 
-- 构造函数详解见第1.7.3节，析构函数的作用是关闭所有文件描述符，并释放所有的`connection*`类型指针。
-- `void dispather()` 转发功能，和 `void loop_once()` 详解见[here](#转发服务)。
-- `void __add_connection(int cur_fd, func_t recv_cb, func_t send_cb, func_t except_cb)` 将文件描述符添加到epoll的关注列表中，并为相应的事件就绪设置回调，详细可见[here](#添加文件描述符到多路转接中)。
-- `__recver`, `__sender`, 和 `__excepter` 是epoll服务中fd就绪后对应的读回调、写回调和异常回调。通过分析可以发现，无论是客户端还是服务端，读回调一定是向fd里面读数据，写回调一定是写数据，因此无论是客户端还是服务端，读写回调都是相同的，只需要提供fd即可，而fd会被封装成`connection`类型，因此这三个函数的参数类型都是`connection*`。详细可见[here](#__recver-__sender和__excepter实现)。
-- `void enable_read_write(connection* conn, bool readable, bool writable)` 这是一个关键函数，用于启动epoll对写事件的关心，因为在reactor转发服务中，默认设置为关心读事件而不是写事件。详细可见[here](#开启写事件的关心-enable_read_write)。
-- `bool is_fd_in_map(int sock)` 检查这个文件描述符是否在connection的映射表中，用于判断fd是否合法。
-- （非成员函数）`static bool set_non_block_fd(int fd)` 将一个文件描述符设置为非阻塞模式，因为我们的reactor服务设置为ET模式，因此需要将fd设置为非阻塞，详细可见[here](#设置et模式的非阻塞)。
+- The constructor is described in Section 1.7.3. The destructor is used to close all file descriptors and release all `connection*` pointers.
+- `void dispather()` forwarding function, and `void loop_once()` are described in [here](#Forwarding Service).
+- `void __add_connection(int cur_fd, func_t recv_cb, func_t send_cb, func_t except_cb)` adds the file descriptor to the epoll watch list and sets callbacks for the corresponding events to be ready. For details, see [here](#Add a file descriptor to the multiplexer).
+- `__recver`, `__sender`, and `__excepter` are the read callbacks, write callbacks, and exception callbacks corresponding to fd ready in the epoll service. Through analysis, we can find that no matter it is the client or the server, the read callback must read data from fd, and the write callback must write data. Therefore, no matter it is the client or the server, the read and write callbacks are the same. You only need to provide fd, and fd will be encapsulated into the `connection` type, so the parameter types of these three functions are all `connection*`. For details, see [here](#__recver-__sender and __excepter implementation).
+- `void enable_read_write(connection* conn, bool readable, bool writable)` This is a key function used to start epoll's attention to write events, because in the reactor forwarding service, the default setting is to care about read events instead of write events. For details, see [here](#Enable the care of write events-enable_read_write).
+- `bool is_fd_in_map(int sock)` Checks whether this file descriptor is in the connection's mapping table, which is used to determine whether fd is legal.
+- (Non-member function) `static bool set_non_block_fd(int fd)` sets a file descriptor to non-blocking mode. Since our reactor service is set to ET mode, fd needs to be set to non-blocking. For details, see [here](#Setting non-blocking in et mode).
 
-### 构造函数执行流程
+### Constructor execution flow
 
-在构造函数 `poll_control` 中，首先进行输入参数的合法性检查，确保传入的回调和工作函数非空，工作线程的数量与文件描述符的数量匹配，且模式参数非默认值。接下来，为每个工作线程创建线程实例，将其编号和对应的文件描述符存储在映射中。然后，创建多路复用对象，根据模式参数（客户端或服务器）添加主连接器到多路复用对象中的逻辑。对于每个工作线程到工作线程的连接，也根据模式添加适当的回调。最后，初始化一个用于存储就绪事件的缓冲区数组。这些步骤确保了多线程中的数据流和事件管理逻辑的正确配置和初始化。
+In the constructor `poll_control`, the validity of the input parameters is first checked to ensure that the callback and work functions passed in are not empty, the number of worker threads matches the number of file descriptors, and the mode parameter is non-default. Next, a thread instance is created for each worker thread, and its number and corresponding file descriptor are stored in the map. Then, a multiplexing object is created, and the logic of adding the main connector to the multiplexing object is added according to the mode parameter (client or server). For each worker thread to worker thread connection, appropriate callbacks are also added according to the mode. Finally, a buffer array for storing ready events is initialized. These steps ensure the correct configuration and initialization of the data flow and event management logic in multithreading.
 
-构造函数代码如下所示，这是很重要的一部分代码，其中的一些细节可以看注释。
+The constructor code is shown below. This is a very important part of the code. Some details can be found in the comments.
 
 ```cpp
-poll_control(void* (*worker)(void*) = nullptr, // worker 线程要做的事
-    callback_t callback = nullptr, // 当前pc对象要做的事情
-    int worker_number = THREAD_NUM_DEFAULT, // worker 线程个数
-    std::vector<int> worker_fds = {}, // worker线程对应的通信管道的文件描述符
-    std::vector<int> connector_to_worker_fds = {}, // conn和worker线程通信的fd
-    int connector_to_connector_fd = 0, // conn和另一个conn通信的fd (conn管理的4个fd，都需要交给epoll来监管)
+poll_control(void* (*worker)(void*) = nullptr, // What the worker thread does
+    callback_t callback = nullptr, // What the current pc object needs to do
+    int worker_number = THREAD_NUM_DEFAULT, // Number of worker threads
+    std::vector<int> worker_fds = {}, // The file descriptor of the communication pipe corresponding to the worker thread
+    std::vector<int> connector_to_worker_fds = {}, // conn and worker thread communication fd
+    int connector_to_connector_fd = 0, // The fd that conn communicates with another conn (the four fds managed by conn all need to be supervised by epoll)
     double lambda = -1,
     PC_MODE mode = -1)
     : __worker_fds(worker_fds)
     , __connector_to_worker_fds(connector_to_worker_fds)
     , __connector_to_connector_fd(connector_to_connector_fd)
-    , __poll(0) /* 这里给poll设置非阻塞 */
+    , __poll(0) /* Set poll to non-blocking here */
     , __revs_num(EPOLL_EVENT_MAX_NUM)
     , __worker_thread_num(worker_number)
     , __lambda(lambda)
     , __mode(mode)
     , __callback(callback)
     , __worker_finish_count(0) {
-    // 0. 检查合法输入参数合法性
-    assert(worker != nullptr && callback != nullptr); // 检查回调非空
-    assert(worker_number == worker_fds.size()); // 检查worker数量和管道fd数量是否相同
+    // 0. Check the validity of legal input parameters
+    assert(worker != nullptr && callback != nullptr); // Check callback is not null
+    assert(worker_number == worker_fds.size()); // Check whether the number of workers and the number of pipe fds are the same
     assert(worker_number == connector_to_worker_fds.size() && worker_number == worker_fds.size());
     assert(mode != -1);
-    // 1. 创建worker线程
-    for (int i = 1; i <= __worker_thread_num; i++) // 三个线程去进行worker任务
+    // 1. Creating a worker thread
+    for (int i = 1; i <= __worker_thread_num; i++) //T hree threads to perform worker tasks
     {
-        // 每个线程的fd
-        int cur_fd = worker_fds[i - 1]; // 记得i-1
-        __worker_threads.push_back(new thread(i, worker, this)); // 编号从1开始，0留给conn线程
-        // worker只需要不断向cur_fd里面写东西就行了(client)
-        // worker只需要不断向cur_fd里面拿东西就行了(server)
-        // w线程里面如何找到对应的fd? 要通过ec对象来找，因此ec对象要维护一个map，w线程的名字->w线程应该操作的fd
+        // fd for each thread
+        int cur_fd = worker_fds[i - 1]; 
+        __worker_threads.push_back(new thread(i, worker, this)); // Numbering starts at 1, and 0 is reserved for the conn thread
+        // The worker only needs to keep writing things to cur_fd.(client)
+        // The worker only needs to keep taking things from cur_fd.(server)
+        // How to find the corresponding fd in the w thread? To find it through the ec object, the ec object needs to maintain a map, the name of the w thread -> the fd that the w thread should operate
         __worker_thread_name_fd_map[__worker_threads[__worker_threads.size() - 1]->name()] = cur_fd;
-        // __worker_thread_name_fd_map[name] 就是这个worker应该操作的fd!
+        // __worker_thread_name_fd_map[name] is the fd that this worker should operate!
     }
-    // 3. conn就是主线程，不是由
-    // 3. 创建多路转接对象(conn才需要多路转接对象)
+    // 3. conn is the main thread
+    // 3. Create a multiplexing object (conn only needs a multiplexing object)
     __poll.create_poll();
-    // 3. 添加conn_to_conn到epoll中，只需要处理发的逻辑(client)
-    // 注意区分，如果是client端__connector_to_connector是写回调，否则是读
+    // 3. Add conn_to_conn to epoll, only need to handle the logic of sending (client)
+    // Note that if it is the client side __connector_to_connector, it is a write callback, otherwise it is a read callback.
     if (__mode == CLIENT)
         __add_connection(connector_to_connector_fd, nullptr, std::bind(&poll_control::__sender, this, std::placeholders::_1), std::bind(&poll_control::__excepter, this, std::placeholders::_1));
     else if (__mode == SERVER) {
         __add_connection(connector_to_connector_fd, std::bind(&poll_control::__recver, this, std::placeholders::_1), nullptr, std::bind(&poll_control::__excepter, this, std::placeholders::_1));
     } else
         assert(false);
-    // 4. 添加conn_to_worker到epoll中，只需要处理从3个管道拿数据的逻辑(client)
+    // 4. Add conn_to_worker to epoll, and only need to handle the logic of getting data from 3 pipes (client)
     for (size_t i = 0; i < __worker_thread_num; ++i) {
         if (__mode == CLIENT)
             __add_connection(connector_to_worker_fds[i], std::bind(&poll_control::__recver, this, std::placeholders::_1), nullptr, std::bind(&poll_control::__excepter, this, std::placeholders::_1));
@@ -264,72 +291,72 @@ poll_control(void* (*worker)(void*) = nullptr, // worker 线程要做的事
         else
             assert(false);
     }
-    // 4. 构建一个获取就绪事件的缓冲区
+    // 4. Construct a buffer to get ready events
     __revs = new struct epoll_event[__revs_num];
 }
 ```
 
-### 添加文件描述符到多路转接中
+### Add a file descriptor to the multiplexer
 
-这一部分更详细的解释可以参考我的个人博客：[work_reactor.html](https://ffengc.github.io/gh-blog/blogs/reactor-server/work_reactor.html)
+For a more detailed explanation of this part, please refer to my personal blog: [work_reactor.html](https://ffengc.github.io/gh-blog/blogs/reactor-server/work_reactor.html)
 
-很容易理解这里的参数，上层传递`cur_fd`，表示需要epoll关心哪一个文件描述符，然后后main三个参数对应就是方法的回调。
+It is easy to understand the parameters here. The upper layer passes `cur_fd`, which indicates which file descriptor epoll needs to care about, and then the three parameters after main correspond to the callback of the method.
 
 ```cpp
     void __add_connection(int cur_fd, func_t recv_cb, func_t send_cb, func_t except_cb) {
-        // 不同种类的套接字都可以调用这个方法
-        // 0. ！先把sock弄成非阻塞！
+        // This method can be called for different types of sockets
+        // 0. ! First make sock non-blocking!
         poll_control::set_non_block_fd(cur_fd);
-        // 1. 构建conn对象，封装sock
+        // 1. Construct a conn object and encapsulate sock
         connection* conn = new connection(cur_fd);
         conn->set_callback(recv_cb, send_cb, except_cb);
-        conn->__tsvr = this; // 让conn对象指向自己
-        // 2. 添加cur_fd到poll中
-        __poll.add_sock_to_poll(cur_fd, EPOLLIN | EPOLLET); // 默认开启读，但是不开写
-        // 3. 把封装好的conn放到map里面去
+        conn->__tsvr = this; // Let the conn object point to itself
+        // 2. Add cur_fd to poll
+        __poll.add_sock_to_poll(cur_fd, EPOLLIN | EPOLLET); // By default, reading is enabled, but writing is disabled.
+        // 3. Put the encapsulated conn into the map
         __connection_map.insert({ cur_fd, conn });
     }
 ```
 
-### 转发服务
+### Dispathering
 
-这一部分更详细的解释可以参考我的个人博客：[work_reactor.html](https://ffengc.github.io/gh-blog/blogs/reactor-server/work_reactor.html)
+For a more detailed explanation of this part, please refer to my personal blog: [work_reactor.html](https://ffengc.github.io/gh-blog/blogs/reactor-server/work_reactor.html)
 
-转发服务主要就是运行 `dispather`，它首先会先启动所有worker线程，然后循环调用 `loop_once`。
+The dispathering service mainly runs `dispather`, which first starts all worker threads and then calls `loop_once` in a loop.
 
 ```cpp
     void dispather() {
-        // 输入参数是上层的业务逻辑
+        // The input parameters are the upper-level business logic
         for (auto& iter : __worker_threads)
             iter->start();
         while (true && !__quit_signal && __worker_finish_count < __worker_thread_num)
             loop_once();
     }
 ```
-`loop_once` 其实就是进行epoll_wait的操作，然后捞取所有就绪的文件描述符。
+`loop_once` actually performs the epoll_wait operation and then retrieves all ready file descriptors.
 
 ```cpp
 void loop_once() {
-        // 捞取所有就绪事件到revs数组中
+        // Get all ready events into the revs array
         int n = __poll.wait_poll(__revs, __revs_num);
         for (int i = 0; i < n; i++) {
             // 此时就可以去处理已经就绪事件了！
             int cur_fd = __revs[i].data.fd;
             uint32_t revents = __revs[i].events;
-            // 将所有的异常，全部交给read和write来处理，所以异常直接打开in和out
-            // read和write就会找except了！
+            // All exceptions are handled by read and write, so exceptions directly open in and out
+            // Read and write will find except!
             if (revents & EPOLLERR)
                 revents |= (EPOLLIN | EPOLLOUT);
             if (revents & EPOLLHUP)
                 revents |= (EPOLLIN | EPOLLOUT);
-            // 如果in就绪了
+            // If in is ready
             if (revents & EPOLLIN) {
-                // 这个事件读就绪了 - 说明从worker的管道中看到了数据
-                // 1. 先判断这个套接字是否在这个map中存在
+                // This event is ready to read - it means data has been seen from the worker's pipeline
+                // 1. First determine whether the socket exists in this map
                 if (is_fd_in_map(cur_fd) && __connection_map[cur_fd]->__recv_callback != nullptr)
                     __connection_map[cur_fd]->__recv_callback(__connection_map[cur_fd]);
             }
-            // 如果out就绪了 说明这个cur_fd是connector->connector的fd
+            // If out is ready, it means that cur_fd is the fd of connector->connector
             if (revents & EPOLLOUT) {
                 if (is_fd_in_map(cur_fd) && __connection_map[cur_fd]->__send_callback != nullptr)
                     __connection_map[cur_fd]->__send_callback(__connection_map[cur_fd]);
@@ -338,41 +365,41 @@ void loop_once() {
     }
 ```
 
-这里需要处理 `EPOLLERR`和`EPOLLHUP` 事件，这两种时间在网络服务中经常出现，需要特殊处理一下。
+Here we need to handle `EPOLLERR` and `EPOLLHUP` events, which often appear in network services and need special handling.
 
-另外，通过`__connection_map`可以直接找到就绪文件描述符对应的`connection`对象的指针。
+In addition, through `__connection_map`, we can directly find the pointer of the `connection` object corresponding to the ready file descriptor.
 
-### `__recver`, `__sender`和`__excepter`实现
+### `__recver`, `__sender` and`__excepter`
 
-这一部分更详细的解释可以参考我的个人博客：[work_reactor.html](https://ffengc.github.io/gh-blog/blogs/reactor-server/work_reactor.html)
+For a more detailed explanation of this part, please refer to my personal blog: [work_reactor.html](https://ffengc.github.io/gh-blog/blogs/reactor-server/work_reactor.html)
 
 **`__recver`**
 
-本质：epoll读事件就绪后，向特定fd中读取数据。
+Essence: After the epoll read event is ready, read data from a specific fd.
 
-需要注意的点：
-- 因为设置了ET模式，所以需要循环读取，而且循环读取到结束之后，是不会阻塞的，会触发`EWOULDBLOCK`和`EAGAIN`，因此如果`errno`被设置成了这两个量，表示读取结束，跳出循环
-- 如果遇到了`EINTR`，则表示CPU被中断，可以继续读取，所以`continue`。
-- 如果read的返回值是0，表示写端关闭了文件描述符，此时读端也应该关闭，并退出。
-- 读取成功之后，不能直接放到cache里面，因为要处理粘包问题，所以要先放到这个`conneciton`的`__in_buffer`里面去等待处理。
-- 等处理好粘包问题之后，把一个一个报文丢到cache里，然后调用callback，等待回调的处理。
+Points to note:
+- Because the ET mode is set, it is necessary to read in a loop, and after the loop reading is completed, it will not be blocked, and will trigger `EWOULDBLOCK` and `EAGAIN`. Therefore, if `errno` is set to these two quantities, it means that the reading is completed and the loop is jumped out.
+- If `EINTR` is encountered, it means that the CPU is interrupted and you can continue to read, so `continue`.
+- If the return value of read is 0, it means that the write end has closed the file descriptor. At this time, the read end should also be closed and exited.
+- After the read is successful, it cannot be directly put into the cache, because the sticky packet problem needs to be handled, so it must be put into the `__in_buffer` of this `conneciton` to wait for processing.
+- After the sticky packet problem is handled, the packets are thrown into the cache one by one, and then the callback is called to wait for the callback to be processed.
 
 ```cpp
     void __recver(connection* conn) {
-        // 非阻塞读取，所以要循环读取
+        // Non-blocking reading, so read in a loop
         const int num = 102400;
         bool is_read_err = false;
         while (true) {
             char buffer[num];
             ssize_t n = read(conn->__fd, buffer, sizeof(buffer) - 1);
             if (n < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK) // 读取完毕了(正常的break)
+                if (errno == EAGAIN || errno == EWOULDBLOCK) // Reading completed (normal break)
                     break;
                 else if (errno == EINTR)
                     continue;
                 else {
                     logMessage(ERROR, "recv error, %d:%s", errno, strerror(errno));
-                    conn->__except_callback(conn); // 异常了，调用异常回调
+                    conn->__except_callback(conn); // Exception occurs, call the exception callback
                     is_read_err = true;
                     break;
                 }
@@ -383,35 +410,35 @@ void loop_once() {
                 is_read_err = true;
                 break;
             }
-            // 读取成功了
+            // Read successfully
             buffer[n] = 0;
-            conn->__in_buffer += buffer; // 放到缓冲区里面就行了
+            conn->__in_buffer += buffer; // Just put it in the buffer.
         } // end while
         // logMessage(DEBUG, "recv done, the inbuffer: %s", conn->__in_buffer.c_str());
         if (is_read_err == true)
             return;
-        // 前面的读取没有出错
-        // 这里就是上层的业务逻辑，如果对收到的报文做处理
-        // 1. 切割报文，把单独的报文切出来
-        // 2. 调用回调
+        // The previous reading is correct
+        // Here is the upper-level business logic, if the received message is processed
+        // 1. Cut the message and cut out the individual message
+        // 2. Call the callback
         // __callback_func(conn, conn->__in_buffer);
         std::vector<std::string> outs = extract_messages(conn->__in_buffer);
-        // outs是切割出来的报文，丢到缓冲区里去
+        // outs is the cut message, which is thrown into the buffer
         for (auto e : outs)
             conn->__tsvr->__local_cache.push(e);
-        // 丢到缓冲区之后，还需要一个很重要的逻辑，就是要把东西放到输出out_fd(out_fd和conn->__fd不是同一个)
+        // After dropping into the buffer, a very important logic is required, which is to put things into the output out_fd (out_fd and conn->__fd are not the same)
         conn->__tsvr->__callback(conn);
     }
 ```
 
 **`__sender`**
 
-本质：epoll写事件就绪后，向特定fd中写入数据。
+Essence: After the epoll write event is ready, write data to a specific fd.
 
-需要注意的点：
-- 因为是ET模式，所以要循环发送，同样，通过判断`EAGAIN`和`EWOULDBLOCK`来判断是否发送完。
-- 如果发送完了，就要手动关闭epoll对写事件的关心（在当前fd下），调用`enable_read_write`即可。
-- 如果出现错误则调用except的回调，这个和之前的一样。
+Points to note:
+- Because it is ET mode, it needs to be sent in a loop. Similarly, it is determined by judging `EAGAIN` and `EWOULDBLOCK` to determine whether it has been sent.
+- If it has been sent, it is necessary to manually turn off epoll's concern for write events (under the current fd) and call `enable_read_write`.
+- If an error occurs, the callback of except is called, which is the same as before.
 
 ```cpp
     void __sender(connection* conn) {
@@ -420,7 +447,7 @@ void loop_once() {
             if (n > 0) {
                 conn->__out_buffer.erase(0, n);
                 if (conn->__out_buffer.empty())
-                    break; // 发完了
+                    break;
             } else {
                 if (errno == EAGAIN || errno == EWOULDBLOCK)
                     break;
@@ -433,7 +460,7 @@ void loop_once() {
                 }
             }
         }
-        // 走到这里，要么就是发完，要么就是发送条件不满足，下次发送
+        // At this point, either the message is sent completely or the conditions for sending are not met. Send next time
         if (conn->__out_buffer.empty())
             conn->__tsvr->enable_read_write(conn, true, false);
         else
@@ -442,18 +469,18 @@ void loop_once() {
 ```
 **`__excepter`**
 
-调用异常回调之后，解除epoll对这个fd对关心即可。
+After calling the exception callback, just remove epoll's concern for this fd pair.
 
 ```cpp
     void __excepter(connection* conn) {
         if (!is_fd_in_map(conn->__fd))
             return;
-        // 1. 从epoll中移除
+        // 1. Remove from epoll
         if (!__poll.delete_from_epoll(conn->__fd))
             assert(false);
-        // 2. 从map中移除
+        // 2. Remove from map
         __connection_map.erase(conn->__fd);
-        // 3. close sock
+        // 3. close sock/fd
         close(conn->__fd);
         // 4. delete conn
         delete conn;
@@ -461,7 +488,7 @@ void loop_once() {
     }
 ```
 
-### 开启写事件的关心 `enable_read_write`
+### Enable write event care `enable_read_write`
 
 ```cpp
     void enable_read_write(connection* conn, bool readable, bool writable) {
@@ -470,117 +497,115 @@ void loop_once() {
             logMessage(ERROR, "trigger write event fail");
     }
 ```
-这个函数会被当epoll获取到读事件后，进行回调后被调用。因为在本项目中，epoll如果获取到了读事件，就会需要把数据写到cache里，然后发送到另一条管道里，因此需要允许写事件的发生。然后前面也提到了epoll是只默认关心读事件的，因此写事件需要手动开启。
+This function will be called after epoll gets a read event and performs a callback. Because in this project, if epoll gets a read event, it will need to write the data to the cache and then send it to another pipe, so it is necessary to allow write events to occur. As mentioned earlier, epoll only cares about read events by default, so write events need to be enabled manually.
 
-## client和server分别提供的worker方法和callback方法
+## The worker method and callback method provided by the client and server respectively
 
-### client的worker和callback
+### Client workers and callbacks
 
-对于client来说，worker的工作就是按照一定规律生产数据，并传输到对应的文件描述符上。
-思路是非常简单的，直接实现即可，使用write把数据写到管道中去，当然，需要序列化消息和加上报头。
+For the client, the worker's job is to produce data according to a certain rule and transmit it to the corresponding file descriptor.
+The idea is very simple and can be implemented directly. Use write to write data to the pipeline. Of course, you need to serialize the message and add a header.
 
 ```cpp
 void* worker(void* args) {
     __thread_data* td = (__thread_data*)args;
     poll_control* pc = (poll_control*)td->__args;
-    // 在这里构造Task
+    // Construct Task here
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::exponential_distribution<> dist(pc->__lambda); // 这里用命令行传递过来的参数
+    std::exponential_distribution<> dist(pc->__lambda); // Here are the parameters passed from the command line
     size_t mesg_number = 0;
     while (true) {
         mesg_number++;
-        double interval = dist(gen); // 生成符合负指数分布的随机数
-        unsigned int sleepTime = static_cast<unsigned int>(std::floor(interval)); // 负指数
+        double interval = dist(gen); // Generates random numbers from a negative exponential distribution
+        unsigned int sleepTime = static_cast<unsigned int>(std::floor(interval)); // Negative exponent
         sleep(sleepTime);
-        // 这里要生成一条数据
+        // Here we need to generate a data
         struct message msg;
         msg.mesg_number = mesg_number;
         msg.src_tid = pthread_self();
         memset(msg.data, '0', sizeof(msg.data));
-        // 现在数据已经生成好了，现在需要发给conn，通过管道的方式，那么这个管道的fd在哪？
+        // Now that the data has been generated, it needs to be sent to conn through a pipeline. So where is the fd of this pipeline?
         std::cout << "generate a mesg[" << mesg_number << "], src_tid: " << msg.src_tid << std::endl;
-        int cur_fd = pc->__worker_thread_name_fd_map[td->__name]; // 所以只需要把信息放到cur_fd的管道里面就可以了
-        // 在把消息放进去之前，先encode一下，协议定制！
-        std::string encoded = encode(msg) + "\n\r\n"; // "\n\r\n" 就是防止粘包的标识
-        // 写到管道中去
+        int cur_fd = pc->__worker_thread_name_fd_map[td->__name]; // So just put the information into the cur_fd pipe.
+        // Before putting the message in, encode it first, customize the protocol!
+        std::string encoded = encode(msg) + "\n\r\n"; // "\n\r\n" It is a mark to prevent sticking
+        // Write to the pipeline
         write(cur_fd, encoded.c_str(), encoded.size());
         if (mesg_number >= MESG_NUMBER) {
-            // 最多发MESG_NUMBER条消息
-            pc->__worker_finish_count++; // 设置退出信号
+            // Send at most MESG_NUMBER messages
+            pc->__worker_finish_count++; // Set exit signal
             break;
         }
     }
     return nullptr;
 }
 ```
-
-对于client的callback，就是epoll获取到读事件之后，把东西从cache中放到写管道的过程，并调用 `enable_read_write` 允许写事件触发。
+For the client callback, after epoll obtains the read event, it puts the thing from the cache into the write pipe, and calls `enable_read_write` to allow the write event to be triggered.
 
 ```cpp
 void callback(connection* conn) {
     auto& q = conn->__tsvr->__local_cache;
     std::string buffer;
     while (!q.empty()) {
-        // 访问队列前端的元素
+        // Access the element at the front of the queue
         std::string single_msg = q.front();
         buffer += single_msg + "\n\r\n";
         q.pop();
     }
-    // 此时buffer里就是要发送的数据了，发送的fd是哪个？conn->__tsvr->__connector_to_connector_fd
-    auto send_conn = conn->__tsvr->__connection_map[conn->__tsvr->__connector_to_connector_fd];
+    // At this point, the buffer contains the data to be sent. Which fd is it sending? conn->__tsvr->__connector_to_connector_fd    auto send_conn = conn->__tsvr->__connection_map[conn->__tsvr->__connector_to_connector_fd];
     send_conn->__out_buffer += buffer;
-    conn->__tsvr->enable_read_write(send_conn, true, true); // 允许写!
+    conn->__tsvr->enable_read_write(send_conn, true, true); // enable write
 }
 ```
 
-### server的worker和callback
+### Server workers and callbacks
 
-server的worker就是从管道中获取事件并打印出来，callback和client基本上是一样的，只是有细微区别。对于client来说，epoll只需要往一个fd中写入数据，但是对于server来说，如结构图所示，需要往3个fd中平均写入，控制这里的逻辑非常简单，可以直接看代码，这里不再解释。
+The server worker gets events from the pipeline and prints them out. The callback is basically the same as the client, but there are slight differences. For the client, epoll only needs to write data to one fd, but for the server, as shown in the structure diagram, it needs to write to three fds evenly. The control logic here is very simple, you can directly look at the code, and I will not explain it here.
 
-## 设置ET模式的非阻塞
+## Set ET mode to non-blocking
 
-这一部分更详细的解释可以参考我的个人博客：[work_reactor.html](https://ffengc.github.io/gh-blog/blogs/reactor-server/work_reactor.html)
+For a more detailed explanation of this part, please refer to my personal blog: [work_reactor.html](https://ffengc.github.io/gh-blog/blogs/reactor-server/work_reactor.html)
 
-### 基本概念
+### Basic concept
 
-epoll有两种工作模式，水平触发（LT）和边缘触发（ET）
+epoll has two working modes, level trigger (LT) and edge trigger (ET)
 
-- LT模式: 如果我手里有你的数据，我就会一直通知 
-- ET模式: 只有我手里你数据是首次到达，从无到有，从有到多(变化)的时候，我才会通知你
+- LT mode: If I have your data, I will keep notifying you
+- ET mode: I will only notify you when your data arrives for the first time, from nothing to something, or from something to more (change)
 
-**细节:**
+**detail:**
 
-我为什么要听ET模式的?凭什么要立刻去走？我如果不取，底层再也不通知了，上层调用就 无法获取该fd的就绪事件了，无法再调用recv， 数据就丢失了。倒逼程序员，如果数据就绪， 就必须一次将本轮就绪的数据全部取走。
+Why should I listen to the ET mode? Why should I go immediately? If I don't take it, the bottom layer will no longer notify, and the upper layer call will not be able to obtain the ready event of the fd, and recv can no longer be called, and the data will be lost. Forcing programmers, if the data is ready, they must take all the ready data in this round at once.
 
-我可以暂时不处理LT中就绪的数据吗?可以! 因为我后面还有读取的机会。
+Can I temporarily not process the ready data in LT? Yes! Because I still have the opportunity to read it later.
 
-如果LT模式，我也一次将数据取完的话，LT和ET的效率是没有区别的。
+If I also take all the data at once in LT mode, there is no difference in efficiency between LT and ET.
 
-ET模式为什么更高效?
+Why is ET mode more efficient?
 
-更少的返回次数（毕竟一次epoll_wait都是一次内核到用户）
+Fewer return times (after all, one epoll_wait is a kernel to user)
 
-ET模式会倒逼程序员尽快将缓冲区中的数据全部取走，应用层尽快的去走了缓冲区中的数据，那么在单位时间下，该模式下工作的服务器，就可以在一定程度上，给发送方发送一 个更大的接收窗口，所以对方就可以拥有一个工大的滑动窗 口，一次向我们发送更多的数据，提高IO吞吐。
+ET mode will force programmers to take all the data in the buffer as soon as possible, and the application layer will take the data in the buffer as soon as possible. Then, in unit time, the server working in this mode can, to a certain extent, send a larger receiving window to the sender, so the other party can have a larger sliding window, send more data to us at a time, and improve IO throughput.
 
-### 为什么ET模式一定要是非阻塞的读取才行
+### Why does ET mode have to be non-blocking reading?
 
-结论：et模式一定要是非阻塞读取。为什么？
+Conclusion: et mode must be non-blocking reading. Why?
 
-首先，et模式要一次全部读完！怎么才能一次读完呢？我都不知道有多少，怎么保证一次读完？所以我们要连续读，一直读！循环读！读到没有数据为止！
+First, et mode must read all at once! How can I read it all at once? I don't know how much there is, how can I ensure that I can read it all at once? So we have to read continuously, keep reading! Read in a loop! Read until there is no data!
 
-ok！读到没有数据, recv就会阻塞！这就不行了，我们不允许阻塞！
+ok! If there is no data, recv will block! This is not okay, we don't allow blocking!
 
-所以怎么办？把这个sock设置成非阻塞的sock，这种sock有个特点：一直读，读到没数据了，不阻塞！直接返回报错，报一个错误：EAGAIN。而这个EAGAIN，可以告诉我们，读完了！
+So what should we do? Set this sock to a non-blocking sock. This sock has a feature: keep reading, and don't block when there is no data! Return an error directly, reporting an error: EAGAIN. And this EAGAIN can tell us that we have finished reading!
 
-### 设置文件描述符为非阻塞
+### Set the file descriptor to non-blocking
 
-可以直接调用系统调用`fcntl`
+You can directly call the system call `fcntl`
 
 ![](./assets/2.png)
 
 ```cpp
-    static bool set_non_block_fd(int fd) { // 文件描述符设置为非阻塞的文件描述符
+    static bool set_non_block_fd(int fd) { // The file descriptor is set to a non-blocking file descriptor
         int fl = fcntl(fd, F_GETFL);
         if (fl < 0)
             return false;
@@ -589,26 +614,26 @@ ok！读到没有数据, recv就会阻塞！这就不行了，我们不允许阻
     }
 ```
 
-## 消息结构和粘包处理-序列化与反序列化-报头实现
+## Message structure and sticky packet processing-serialization and deserialization-header implementation
 
-消息结构：
+Message structure:
 
 ```cpp
 struct message {
     size_t mesg_number;
-    uint64_t src_tid; // 8个字节
-    char data[4096]; // 4096个字节
+    uint64_t src_tid; // 8 bytes
+    char data[4096]; // 4096 bytes
 };
 ```
 
-序列化方法：
+Serialization method:
 
 ```cpp
 std::string encode(const message& msg) {
     std::ostringstream out;
-    // 编码 mesg_number 和 src_tid 为十六进制字符串
+    // Encode mesg_number and src_tid as hexadecimal strings
     out << std::hex << msg.mesg_number << '|' << msg.src_tid << '|';
-    // 编码 data，处理特殊字符
+    // Encode data, handle special characters
     for (int i = 0; i < 4096; i++) {
         if (std::isprint(msg.data[i]) && msg.data[i] != '%') {
             out << msg.data[i];
@@ -620,24 +645,24 @@ std::string encode(const message& msg) {
 }
 ```
 
-反序列化方法：
+Deserialization method:
 
 ```cpp
-// 反序列化
+// Deserialization
 bool decode(const std::string& serialized, message& msg) {
     std::istringstream in(serialized);
     std::string mesg_number_hex, tid_hex;
     if (!std::getline(in, mesg_number_hex, '|') || !std::getline(in, tid_hex, '|'))
         return false;
-    // 解析 mesg_number
+    // Parsing mesg_number
     std::istringstream mesg_number_stream(mesg_number_hex);
     mesg_number_stream >> std::hex >> msg.mesg_number;
-    // 解析 src_tid
+    // Parsing src_tid
     std::istringstream tid_stream(tid_hex);
     tid_stream >> std::hex >> msg.src_tid;
-    // 解析 data
+    // Parsing data
     std::string data;
-    std::getline(in, data); // 读取剩余部分作为 data
+    std::getline(in, data);
     size_t i = 0, j = 0;
     while (i < data.size() && j < 4096) {
         if (data[i] == '%' && i + 2 < data.size()) {
@@ -645,7 +670,7 @@ bool decode(const std::string& serialized, message& msg) {
             int value;
             hex_char >> std::hex >> value;
             msg.data[j++] = static_cast<char>(value);
-            i += 3; // 跳过 "%XX"
+            i += 3; // Skip "%XX"
         } else {
             msg.data[j++] = data[i++];
         }
@@ -654,7 +679,7 @@ bool decode(const std::string& serialized, message& msg) {
 }
 ```
 
-报文分割符设置为: `\n\r\n`
+The message separator is set to: `\n\r\n`
 
 分割报文方法：
 ```cpp
@@ -672,23 +697,23 @@ std::vector<std::string> extract_messages(std::string& buffer) {
 }
 ```
 
-## 文件描述符的封装
+## File descriptor encapsulation
 
-为什么需要封装fd:
+Why do we need to encapsulate fd:
 
-因为读取是非阻塞的，所以需要对报文做切割处理，因为是非阻塞读取，所以epoll在某个fd进行读取时候是会一次性读完的！读完的字节流可能含有多个报文，因此需要一个缓冲区，来做报文切割的任务，因此每一个fd都需要配套一个缓冲区。除此之外每一个fd的三种就绪事件对应的回调，也应该整合起来，因此把fd封装成 `connection` 类型。这个类型最关键的，就是三种回调方法，输入缓冲区和输出缓冲区。其余还有一些细节，比如回指指针等等。
+Because reading is non-blocking, we need to split the message. Because it is non-blocking reading, epoll will read all the messages at once when reading a certain fd! The read byte stream may contain multiple messages, so a buffer is needed to do the task of message splitting. Therefore, each fd needs to be equipped with a buffer. In addition, the callbacks corresponding to the three ready events of each fd should also be integrated, so the fd is encapsulated into the `connection` type. The most important thing about this type is the three callback methods, input buffer and output buffer. There are some other details, such as back pointers, etc.
 
-封装后结构如下所示：
+The encapsulated structure is as follows:
 
 ```cpp
 class poll_control;
 class connection;
 using func_t = std::function<void(connection*)>;
-using callback_t = std::function<void(connection*)>; // 业务逻辑
+using callback_t = std::function<void(connection*)>; // Business logic
 /**
- * 对于client来说callback负责把cache的东西，放到发送的文件描述符中的out_buffer里去
- * 对于server来说callback就是把cache的东西，平均分配到3个worker线程对应的pipe_fd的out_buffer里去
- */
+* For the client, the callback is responsible for putting the cached content into the out_buffer of the sent file descriptor
+* For the server, the callback is to evenly distribute the cached content to the out_buffer of the pipe_fd corresponding to the three worker threads
+*/
 class connection {
 public:
     connection(int fd = -1)
@@ -702,31 +727,31 @@ public:
     }
 
 public:
-    int __fd; // io的文件描述符
+    int __fd;
     func_t __recv_callback;
     func_t __send_callback;
     func_t __except_callback;
-    std::string __in_buffer; // 输入缓冲区（暂时没有处理二进制流）
-    std::string __out_buffer; // 输出缓冲区
-    poll_control* __tsvr; // 回指指针
+    std::string __in_buffer;
+    std::string __out_buffer;
+    poll_control* __tsvr;
 };
 ```
 
-## `poll.hpp`多路转接的封装, `log.hpp`和`thread.hpp`的封装
+## `poll.hpp` multiplexing wrapper, `log.hpp` and `thread.hpp` wrapper
 
-可以直接看代码，这里都是一些比较简单的封装。
+You can look at the code directly. Here are some relatively simple encapsulations.
 
-## 负值数控制
+## Negative index control
 
-使用C++11随机数生成的方法进行控制。
+Use C++11 random number generation methods for control.
 
 ```cpp
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::exponential_distribution<> dist(pc->__lambda); // 这里用命令行传递过来的参数
-    double interval = dist(gen); // 生成符合负指数分布的随机数
-    unsigned int sleepTime = static_cast<unsigned int>(std::floor(interval)); // 负指数
+    std::exponential_distribution<> dist(pc->__lambda); // Here are the parameters passed from the command line
+    double interval = dist(gen); // Generates random numbers from a negative exponential distribution
+    unsigned int sleepTime = static_cast<unsigned int>(std::floor(interval)); // Negative exponent
     sleep(sleepTime);
 ```
 
-通过这种方法可以控制负指数生成的逻辑。
+This way you can control the logic of negative exponent generation.
