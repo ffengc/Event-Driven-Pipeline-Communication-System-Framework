@@ -1,5 +1,8 @@
 # 框架复用
 
+- [简体中文](./reuse.md)
+- [English](./reuse-en.md)
+
 复用该框架，需要`./Utils`和`./temp`目录中的内容。
 
 构造`poll_control`对象：
